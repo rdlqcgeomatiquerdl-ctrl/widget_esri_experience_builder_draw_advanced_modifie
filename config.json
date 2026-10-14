@@ -1,0 +1,17 @@
+{
+  "creationMode": "continuous",
+  "turnOffOnClose": false,
+  "changeTitle": true,
+  "title": "Drawn Graphics",
+  "listMode": true,
+  "changeListMode": false,
+  "userDistances": [],
+  "defaultDistance": 0,
+  "userAreas": [],
+  "defaultArea": 0,
+  "storageScope": "app-specific",
+  "defaultBufferDistance": 100,
+  "defaultBufferUnit": "feet",
+  "defaultBufferOpacity": 75,
+  "defaultBufferColor": "#d83020"
+}

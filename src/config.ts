@@ -1,0 +1,103 @@
+// Type-only compatibility shape for Experience Builder immutable config objects.
+// Avoids Visual Studio resolving seamless-immutable through the EB 1.21 pnpm layout.
+export type ImmutableObject<T> = T & {
+    set: <K extends keyof T>(key: K, value: T[K]) => ImmutableObject<T>
+    without: (...keys: Array<keyof T>) => ImmutableObject<T>
+    asMutable: (options?: { deep?: boolean }) => T
+}
+
+export interface UnitConfig {
+    unit: string
+    label?: string
+    abbreviation?: string
+    conversion?: number
+}
+
+// NOTE: when adding a key here, also add it to KNOWN_CONFIG_KEYS (and, for a
+// default-on boolean, DEFAULT_ON_BOOLEAN_KEYS) in setting/setting.tsx so the
+// settings XML import/export stays complete.
+export interface Config {
+  /** Show the question-mark button that opens the help guide. Undefined means on,
+   *  so apps configured before this setting existed keep their help button. */
+  showHelp?: boolean
+    creationMode: DrawMode;
+    turnOffOnClose: boolean;
+    changeTitle: boolean;
+    distanceUnits?: Array<{ unit: string }> // ✅ FIXED
+    areaUnits?: Array<{ unit: string }> // ✅ FIXED
+    radiusUnits?: Array<{ unit: string }> // ✅ FIXED
+    measurePointLabel?: string
+    measurePolylineLabel?: string
+    measurePolygonLabel?: string
+    measureCircleLabel?: string
+    title: string
+    listMode: boolean
+    changeListMode: boolean
+    userDistances: UnitConfig[]
+    defaultDistance: number
+    userAreas: UnitConfig[]
+    defaultArea: number
+    // Storage scope for drawings persistence
+    storageScope: StorageScope
+    // Mailing Labels integration
+    enableMailingLabels?: boolean
+    mailingLabelsWidgetId?: string
+    mailingLabelsControllerId?: string
+    // Identify By Query integration - SEND direction
+    enableIdentifyByQuery?: boolean
+    identifyWidgetId?: string
+    identifyControllerId?: string
+    // Identify By Query integration - RECEIVE direction
+    enableIdentifyIntegration?: boolean
+    // Tool + panel toggles consumed by the runtime widget
+    enableMyDrawings?: boolean
+    enableMyDrawingsImport?: boolean
+    enableMyDrawingsExport?: boolean
+    enableMyDrawingsLock?: boolean
+    enableMyDrawingsGroup?: boolean
+    enableMyDrawingsMerge?: boolean
+    enableMyDrawingsDuplicate?: boolean
+    enableMyDrawingsZoomTo?: boolean
+    enableMyDrawingsProperties?: boolean
+    enableMyDrawingsSort?: boolean
+    maxDrawings?: number
+    defaultTab?: string
+    enablePointTool?: boolean
+    enablePolylineTool?: boolean
+    enableFreePolylineTool?: boolean
+    enableTextTool?: boolean
+    enableRectangleTool?: boolean
+    enablePolygonTool?: boolean
+    enableFreePolygonTool?: boolean
+    enableCircleTool?: boolean
+    enableTriangleTool?: boolean
+    enableCurveTools?: boolean
+    enableCopyFromMap?: boolean
+    enableSymbolEditor?: boolean
+    enableMeasurements?: boolean
+    // Measurement sub-options (default true when undefined)
+    rememberMeasurementPreferences?: boolean   // persist each user's units/display toggles in their browser
+    allowMultipleUnits?: boolean               // let users show additional units alongside the primary unit
+    enableSnapping?: boolean
+    enableBuffer?: boolean
+    // Developer-configurable buffer defaults (initial values; users can still change at runtime)
+    defaultBufferDistance?: number
+    defaultBufferUnit?: string
+    defaultBufferOpacity?: number
+    defaultBufferColor?: string
+    enableUndoRedo?: boolean
+    confirmBeforeClear?: boolean
+}
+
+export enum DrawMode {
+    SINGLE = 'single',
+    CONTINUOUS = 'continuous',
+    UPDATE = 'update'
+}
+
+export enum StorageScope {
+    APP_SPECIFIC = 'app-specific',
+    GLOBAL = 'global'
+}
+
+export type IMConfig = ImmutableObject<Config>;
