@@ -31,8 +31,7 @@ const PolygonCompat = Polygon as typeof Polygon & {
 const GraphicCompat = Graphic as typeof Graphic & { fromJSON: (json: any) => Graphic };
 import * as webMercatorUtils from "esri/geometry/support/webMercatorUtils";
 import * as geometryEngine from 'esri/geometry/geometryEngine';
-import * as densifyOperator from 'esri/geometry/operators/densifyOperator';
-import * as projectOperator from 'esri/geometry/operators/projectOperator';
+import { densifyOperator, projectOperator } from '../geometry-compat';
 const proj4Module: any = require('proj4');
 const proj4: any = proj4Module.default || proj4Module;
 if (proj4 && typeof proj4.defs === 'function') {

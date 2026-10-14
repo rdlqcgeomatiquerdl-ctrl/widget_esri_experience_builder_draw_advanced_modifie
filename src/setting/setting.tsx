@@ -1,3 +1,4 @@
+console.log('%c[DrawAdvanced Setting] Module setting.js chargé avec succès ⚙️', 'color: #00bcd4; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
 import { React, defaultMessages as jimuCoreMessages } from 'jimu-core';
 import { AllWidgetSettingProps } from 'jimu-for-builder';
 import { IMConfig, Config, DrawMode, StorageScope } from '../config';

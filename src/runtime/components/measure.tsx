@@ -1,4 +1,4 @@
-﻿import { React } from 'jimu-core'
+import { React } from 'jimu-core'
 import { CollapsableCheckbox, Checkbox, Label, Select, Option, Alert, NumericInput, Button, TextInput, Slider, Switch, AdvancedButtonGroup, ButtonGroup, Dropdown, DropdownButton, DropdownMenu, DropdownItem } from 'jimu-ui'
 import { ColorPicker } from 'jimu-ui/basic/color-picker'
 import { TrashOutlined } from 'jimu-icons/outlined/editor/trash'
@@ -11,12 +11,14 @@ const PolylineCompat = Polyline as typeof Polyline & { fromJSON: (json: any) => 
 import SpatialReference from 'esri/geometry/SpatialReference';
 
 const SpatialReferenceCompat = SpatialReference as typeof SpatialReference & { WGS84: SpatialReference };
-import * as projectOperator from 'esri/geometry/operators/projectOperator';
-import * as geodeticAreaOperator from 'esri/geometry/operators/geodeticAreaOperator';
-import * as geodeticLengthOperator from 'esri/geometry/operators/geodeticLengthOperator';
-import * as areaOperator from 'esri/geometry/operators/areaOperator'
-import * as lengthOperator from 'esri/geometry/operators/lengthOperator'
-import * as densifyOperator from 'esri/geometry/operators/densifyOperator'
+import {
+	projectOperator,
+	geodeticAreaOperator,
+	geodeticLengthOperator,
+	areaOperator,
+	lengthOperator,
+	densifyOperator
+} from '../geometry-compat';
 import Color from 'esri/Color';
 import TextSymbol from 'esri/symbols/TextSymbol';
 import SimpleMarkerSymbol from 'esri/symbols/SimpleMarkerSymbol';

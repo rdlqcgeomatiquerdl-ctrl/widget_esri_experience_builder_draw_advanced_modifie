@@ -52,11 +52,14 @@ import Multipoint from 'esri/geometry/Multipoint';
 import Point from 'esri/geometry/Point';
 import Circle from 'esri/geometry/Circle';
 import * as geometryEngine from 'esri/geometry/geometryEngine';
-import * as densifyOperator from 'esri/geometry/operators/densifyOperator';
-import * as lengthOperator from 'esri/geometry/operators/lengthOperator';
-import * as geodeticLengthOperator from 'esri/geometry/operators/geodeticLengthOperator';
-import * as areaOperator from 'esri/geometry/operators/areaOperator';
-import * as geodeticAreaOperator from 'esri/geometry/operators/geodeticAreaOperator';
+console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.0) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
+import {
+	densifyOperator,
+	lengthOperator,
+	geodeticLengthOperator,
+	areaOperator,
+	geodeticAreaOperator
+} from './geometry-compat';
 import { hooks as __exbI18nHooks } from 'jimu-core';
 import __exbI18nMessages from './translations/default';
 import { __locale, __setIntl, __t, __tc } from './i18n-t'
@@ -1860,8 +1863,14 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 		}
 	};
 
+	componentDidCatch(error: any, info: any) {
+		console.error('[DrawAdvanced] Erreur d’exécution React capturée par componentDidCatch:', error, info);
+		this.setState({ crashError: { error: String(error?.stack || error?.message || error), info } } as any);
+	}
+
 	constructor(props) {
 		super(props);
+		console.log('[DrawAdvanced] Constructor initialisé avec succès.');
 		this.state = {
 			currentJimuMapView: null,
 			graphics: [],
@@ -2017,6 +2026,7 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 	}
 
 	componentDidMount() {
+		console.log('[DrawAdvanced] componentDidMount appelé avec succès.');
 		this.beacon = beacon.init(this.props);
 		this.setState({ widgetInit: true });
 
@@ -10477,8 +10487,21 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 	}
 
 	render() {
-    __setIntl((this.props as any).intl)
-		const { config } = this.props;
+		if ((this.state as any)?.crashError) {
+			const err = (this.state as any).crashError;
+			return (
+				<div style={{ padding: '16px', background: '#ffebee', color: '#c62828', border: '2px solid #ef5350', borderRadius: '6px', fontSize: '12px', fontFamily: 'monospace', overflow: 'auto', maxHeight: '100%' }}>
+					<h4 style={{ margin: '0 0 8px 0', color: '#b71c1c' }}>⚠️ Erreur d'exécution Draw Advanced</h4>
+					<p style={{ margin: '0 0 8px 0' }}>Une erreur s'est produite dans le composant :</p>
+					<pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '11px', background: '#fff', padding: '8px', borderRadius: '4px', border: '1px solid #ffcdd2' }}>
+						{err.error}
+					</pre>
+				</div>
+			);
+		}
+		try {
+			__setIntl((this.props as any).intl)
+			const { config } = this.props;
 		const {
 			fontColor, fontSize, fontHalo, fontRotation, fontWeight, fontStyle, fontDecoration,
 			fontHaloColor, fontHaloEnabled, fontHaloSize, textSymPreviewText, textPreviewHeight,
@@ -10622,5 +10645,16 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 				</div>
 			</div>
 		);
+		} catch (renderError: any) {
+			console.error('[DrawAdvanced] Fatal render error:', renderError);
+			return (
+				<div style={{ padding: '16px', background: '#ffebee', color: '#c62828', border: '2px solid #ef5350', borderRadius: '6px', fontSize: '12px', fontFamily: 'monospace', overflow: 'auto' }}>
+					<h4 style={{ margin: '0 0 8px 0', color: '#b71c1c' }}>⚠️ Erreur render() Draw Advanced</h4>
+					<pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '11px', background: '#fff', padding: '8px', borderRadius: '4px' }}>
+						{String(renderError?.stack || renderError?.message || renderError)}
+					</pre>
+				</div>
+			);
+		}
 	}
 }

@@ -15,7 +15,7 @@ import SimpleLineSymbol from 'esri/symbols/SimpleLineSymbol';
 import TextSymbol from 'esri/symbols/TextSymbol';
 import Color from 'esri/Color';
 import * as geometryEngine from 'esri/geometry/geometryEngine';
-import * as densifyOperator from 'esri/geometry/operators/densifyOperator';
+import { densifyOperator } from '../geometry-compat';
 import { __t } from '../i18n-t'
 
 interface ExtendedGraphic extends Graphic {

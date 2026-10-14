@@ -1,4 +1,4 @@
-﻿import { React, hooks } from 'jimu-core';
+import { React, hooks } from 'jimu-core';
 import defaultMessages from '../translations/default';
 import { ImmutableObject } from 'jimu-core';
 import { CollapsableCheckbox, Alert, Switch, Label, Select, Option, Slider, NumericInput } from 'jimu-ui';
@@ -7,7 +7,29 @@ import type { JimuMapView } from 'jimu-arcgis';
 // FeatureSnappingLayerSource removed in JSAPI 5.0 - featureSources autocasts
 import FeatureLayer from 'esri/layers/FeatureLayer';
 import Collection from 'esri/core/Collection';
-import GridControls from 'esri/widgets/support/GridControls';
+type GridControls = any;
+let _GridControlsClass: any = null;
+let _gridControlsLoadAttempted = false;
+
+function getGridControlsClass(): Promise<any> {
+    if (_GridControlsClass) return Promise.resolve(_GridControlsClass);
+    if (_gridControlsLoadAttempted) return Promise.resolve(null);
+    _gridControlsLoadAttempted = true;
+    return new Promise((resolve) => {
+        try {
+            if (typeof (window as any).require === 'function') {
+                (window as any).require(['esri/widgets/support/GridControls'], (cls: any) => {
+                    _GridControlsClass = cls;
+                    resolve(cls);
+                }, () => resolve(null));
+            } else {
+                resolve(null);
+            }
+        } catch {
+            resolve(null);
+        }
+    });
+}
 import { __t } from '../i18n-t'
 
 interface SnappingControlsProps {
@@ -369,56 +391,53 @@ export const SnappingControls = (props: SnappingControlsProps): React.ReactEleme
 
     // Grid Controls initialization and cleanup
     React.useEffect(() => {
+        let isMounted = true;
         // Initialize GridControls when we have a 2D MapView (grid only works in 2D)
         if (props.jimuMapView?.view && !gridControlsRef.current) {
-            try {
-                const view = props.jimuMapView.view;
+            const view = props.jimuMapView.view;
+            if (view.type === '2d') {
+                getGridControlsClass().then((GridControls) => {
+                    if (!isMounted || !GridControls || gridControlsRef.current) return;
+                    try {
+                        const gridControls = new GridControls({
+                            view: view as any,
+                            theme: gridTheme,
+                            customColor: gridTheme === 'custom' ? gridColor : undefined,
+                            snappingOptions: props.sketchViewModel?.snappingOptions || (view as any).snappingOptions || undefined,
+                            visibleElements: {
+                                colorSelection: false,
+                                dynamicScaleToggle: false,
+                                gridEnabledToggle: false,
+                                numericInputs: false,
+                                gridSnapEnabledToggle: false,
+                                lineIntervalInput: false,
+                                outOfScaleWarning: false,
+                                placementButtons: false,
+                                rotateWithMapToggle: false
+                            }
+                        });
 
-                // Grid only works with 2D MapView, not SceneView
-                if (view.type !== '2d') {
-                    return;
-                }
+                        gridControlsRef.current = gridControls;
 
-                // Create GridControls instance - it manages the view's grid
-                const gridControls = new GridControls({
-                    view: view as any,
-                    theme: gridTheme,
-                    customColor: gridTheme === 'custom' ? gridColor : undefined,
-                    snappingOptions: props.sketchViewModel?.snappingOptions || (view as any).snappingOptions || undefined,
-                    visibleElements: {
-                        colorSelection: false,
-                        dynamicScaleToggle: false,
-                        gridEnabledToggle: false,
-                        numericInputs: false,
-                        gridSnapEnabledToggle: false,
-                        lineIntervalInput: false,
-                        outOfScaleWarning: false,
-                        placementButtons: false,
-                        rotateWithMapToggle: false
+                        if (gridControls.viewModel && gridEnabled) {
+                            gridControls.viewModel.trySetDisplayEnabled(true);
+                            gridControls.viewModel.dynamicScaling = gridSpacingMode === 'mapUnits' ? false : gridDynamicScale;
+                            gridControls.viewModel.rotation = gridRotation;
+                            gridControls.viewModel.spacing = gridSpacing;
+                            gridControls.viewModel.snappingEnabled = gridSnapEnabled;
+                            gridControls.viewModel.majorLineInterval = gridMajorLineInterval;
+                            gridControls.viewModel.rotateWithMap = gridRotateWithMap;
+                        }
+                    } catch (error) {
+                        console.warn('GridControls not supported on this Portal version:', error);
                     }
-                });
-
-                // Store reference
-                gridControlsRef.current = gridControls;
-
-                // Initial grid state - enable if toggle is on
-                if (gridControls.viewModel && gridEnabled) {
-                    gridControls.viewModel.trySetDisplayEnabled(true);
-                    gridControls.viewModel.dynamicScaling = gridSpacingMode === 'mapUnits' ? false : gridDynamicScale;
-                    gridControls.viewModel.rotation = gridRotation;
-                    gridControls.viewModel.spacing = gridSpacing;
-                    gridControls.viewModel.snappingEnabled = gridSnapEnabled;
-                    gridControls.viewModel.majorLineInterval = gridMajorLineInterval;
-                    gridControls.viewModel.rotateWithMap = gridRotateWithMap;
-                }
-
-            } catch (error) {
-                console.error('Error initializing GridControls:', error);
+                }).catch(() => {});
             }
         }
 
         // Cleanup on unmount
         return () => {
+            isMounted = false;
             if (gridControlsRef.current) {
                 try {
                     // Disable grid before destroying
