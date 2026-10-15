@@ -14,7 +14,7 @@ import { CloseOutlined } from 'jimu-icons/outlined/editor/close';
 import { CopyOutlined } from 'jimu-icons/outlined/editor/copy';
 // PasteIcon removed - copy+paste is now a single action (no separate Paste button state)
 const SettingOutlined = require('jimu-icons/svg/outlined/application/setting.svg');
-import { JimuMapView, JimuMapViewComponent } from 'jimu-arcgis';
+import { JimuMapView, JimuMapViewComponent, MapViewManager } from 'jimu-arcgis';
 import { getStyle } from './lib/style';
 import defMessages from './translations/default';
 // Module-level translation fallback for helper components rendered outside the Widget class
@@ -52,7 +52,7 @@ import Multipoint from 'esri/geometry/Multipoint';
 import Point from 'esri/geometry/Point';
 import Circle from 'esri/geometry/Circle';
 import * as geometryEngine from 'esri/geometry/geometryEngine';
-console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.0) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
+console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.1) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
 import {
 	densifyOperator,
 	lengthOperator,
@@ -653,6 +653,48 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 	// were registered without storing return handles, causing them to accumulate on
 	// every map-view change and every widget close/reopen cycle.
 	private _viewHandles: Array<{ remove: () => void }> = [];
+	private _currentJimuMapView: JimuMapView | null = null;
+
+	getEffectiveMapWidgetId = (): string | null => {
+		if (this.props.useMapWidgetIds && this.props.useMapWidgetIds.length > 0 && this.props.useMapWidgetIds[0]) {
+			return this.props.useMapWidgetIds[0];
+		}
+		try {
+			const widgets = getAppStore().getState()?.appConfig?.widgets;
+			if (widgets) {
+				const mapId = Object.keys(widgets).find(id => {
+					const uri = widgets[id]?.uri || '';
+					const name = widgets[id]?.manifest?.name || '';
+					return uri.includes('arcgis-map') || name === 'arcgis-map';
+				});
+				if (mapId) {
+					console.log('[DrawAdvanced] Widget Carte auto-détecté dans appConfig:', mapId);
+					return mapId;
+				}
+			}
+		} catch (e) {
+			console.warn('[DrawAdvanced] Échec auto-détection widget Carte:', e);
+		}
+		return null;
+	};
+
+	checkAndConnectMapView = (): boolean => {
+		if (this.sketchViewModel && this.sketchViewModel.view) {
+			return true;
+		}
+		try {
+			const mapViews = MapViewManager.getInstance().getAllJimuMapViews();
+			const activeJmv = mapViews.find(mv => mv && mv.view && !mv.view.destroyed);
+			if (activeJmv) {
+				console.log('[DrawAdvanced] Connexion automatique à la carte active via MapViewManager:', activeJmv.id);
+				this.activeViewChangeHandler(activeJmv);
+				return true;
+			}
+		} catch (e) {
+			console.warn('[DrawAdvanced] Échec auto-connexion MapViewManager:', e);
+		}
+		return false;
+	};
 	// Custom true-curve line tool state (arc / endpointArc / bezier) — multi-segment
 	private _curveType: 'arc' | 'endpointArc' | 'bezier' | null = null;
 	private _curveHandles: Array<{ remove: () => void }> = [];
@@ -2029,6 +2071,11 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 		console.log('[DrawAdvanced] componentDidMount appelé avec succès.');
 		this.beacon = beacon.init(this.props);
 		this.setState({ widgetInit: true });
+
+		// Attempt auto-connection to map view if already present
+		setTimeout(() => {
+			this.checkAndConnectMapView();
+		}, 100);
 
 		const currentMap = this.state.currentJimuMapView?.view?.map;
 		if (currentMap) {
@@ -4449,6 +4496,9 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 	private _copyModeClickHandler: any | null = null;
 
 	componentDidUpdate(prevProps: Readonly<AllWidgetProps<IMConfig>>, prevState: Readonly<States>) {
+		if (!this.sketchViewModel || !this.sketchViewModel.view) {
+			this.checkAndConnectMapView();
+		}
 		if (this.state.currentJimuMapView) {
 			const view = this.state.currentJimuMapView.view;
 			if (view && view.map && (!this.drawLayer || !view.map.findLayerById('DrawGL'))) {
@@ -4788,16 +4838,19 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 				}
 				this.sketchViewModel = null;
 			}
+			this._currentJimuMapView = null;
 			this.setState({ currentJimuMapView: null });
 			return;
 		}
 
+		console.log('[DrawAdvanced] activeViewChangeHandler appelé avec jimuMapView:', jimuMapView.id, 'view ready:', jimuMapView.view?.ready);
+		this._currentJimuMapView = jimuMapView;
 		this.setState({ currentJimuMapView: jimuMapView });
 
-		jimuMapView.whenJimuMapViewLoaded().then(async () => {
+		const doInit = async () => {
 			// Widget unmounted (or moved to another view) while the map was loading: do not attach
 			// handlers, create a SketchViewModel or disable popups on a view nobody will restore.
-			if (this._unmounted || this.state.currentJimuMapView !== jimuMapView) return;
+			if (this._unmounted || this._currentJimuMapView !== jimuMapView) return;
 
 			const { map } = jimuMapView.view;
 			const view = jimuMapView.view;
@@ -4899,17 +4952,33 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 					return;
 				}
 
-				// Wait for SketchViewModel to be fully ready before proceeding
+				// Wait for SketchViewModel to be fully ready before proceeding, with a fallback timeout
 				await new Promise<void>((resolve) => {
-					if (this.sketchViewModel.state === "ready") {
+					if (!this.sketchViewModel || this.sketchViewModel.state === "ready") {
 						resolve();
-					} else {
-						const handle = this.sketchViewModel.watch("state", (state) => {
-							if (state === "ready") {
-								handle.remove();
+						return;
+					}
+					let resolved = false;
+					const timer = setTimeout(() => {
+						if (!resolved) {
+							resolved = true;
+							try { handle?.remove(); } catch (_) {}
+							resolve();
+						}
+					}, 1000);
+					let handle: any;
+					try {
+						handle = this.sketchViewModel.watch("state", (state: string) => {
+							if (state === "ready" && !resolved) {
+								resolved = true;
+								clearTimeout(timer);
+								try { handle?.remove(); } catch (_) {}
 								resolve();
 							}
 						});
+					} catch (e) {
+						clearTimeout(timer);
+						resolve();
 					}
 				});
 
@@ -4920,7 +4989,7 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 				this._viewHandles.push(this.sketchViewModel.on('create', this.svmGraCreate));
 				this._viewHandles.push(this.sketchViewModel.on('update', this.svmGraUpdate));
 
-				//console.log('✅ SketchViewModel fully initialized and ready');
+				console.log('[DrawAdvanced] ✅ SketchViewModel initialisé avec succès et lié à la carte.');
 			} catch (error) {
 				console.error('Error creating SketchViewModel:', error);
 				return;
@@ -5333,10 +5402,19 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 			);
 
 			//console.log('✅ Enhanced event handlers configured successfully');
+		};
 
-		}).catch(error => {
-			console.error('❌ Error in activeViewChangeHandler:', error);
-		});
+		if (jimuMapView.view && jimuMapView.view.ready) {
+			doInit().catch(error => console.error('❌ Error in activeViewChangeHandler (sync):', error));
+		} else if (typeof jimuMapView.whenJimuMapViewLoaded === 'function') {
+			jimuMapView.whenJimuMapViewLoaded().then(() => {
+				doInit().catch(error => console.error('❌ Error in activeViewChangeHandler (async):', error));
+			}).catch(error => {
+				console.error('❌ Error in whenJimuMapViewLoaded:', error);
+			});
+		} else {
+			doInit().catch(error => console.error('❌ Error in activeViewChangeHandler (fallback):', error));
+		}
 	};
 
 	handleMeasurementSystemControl = (enabled: boolean) => {
@@ -6406,7 +6484,10 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 		try { this.sketchViewModel?.cancel(); } catch { }
 		this._deactivateCurveHandles();
 		this._clearCurvePreview();
-		const view = this.state.currentJimuMapView?.view;
+		if (!this.sketchViewModel || !this.sketchViewModel.view) {
+			this.checkAndConnectMapView();
+		}
+		const view = this.state.currentJimuMapView?.view || this._currentJimuMapView?.view || this.sketchViewModel?.view;
 		if (!view) { console.warn('Curve tool: no map view'); return; }
 		this._curveType = type;
 		this._resetCurvePath();
@@ -6726,7 +6807,10 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 		try { this.sketchViewModel?.cancel(); } catch { }
 		this._deactivateTriHandles();
 		this._clearTriPreview();
-		const view = this.state.currentJimuMapView?.view;
+		if (!this.sketchViewModel || !this.sketchViewModel.view) {
+			this.checkAndConnectMapView();
+		}
+		const view = this.state.currentJimuMapView?.view || this._currentJimuMapView?.view || this.sketchViewModel?.view;
 		if (!view) { console.warn('Triangle tool: no map view'); return; }
 		this._triCenter = null;
 		this.setState({ triangleActive: true, showCurveMenu: false, currentTool: 'triangle' as any, triangleHint: this._triHintText(), showSymPreview: true, currentSymbolType: JimuSymbolType.Polygon });
@@ -8200,8 +8284,13 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 
 		// Validate SketchViewModel before proceeding with drawing tools
 		if (toolBtn !== '' && (!this.sketchViewModel || !this.sketchViewModel.view)) {
-			console.warn('SketchViewModel not available for drawing tool activation');
-			if (!this.props.useMapWidgetIds || this.props.useMapWidgetIds.length === 0) {
+			this.checkAndConnectMapView();
+		}
+
+		if (toolBtn !== '' && (!this.sketchViewModel || !this.sketchViewModel.view)) {
+			console.warn('[DrawAdvanced] SketchViewModel not available for drawing tool activation');
+			const effectiveMapId = this.getEffectiveMapWidgetId();
+			if (!effectiveMapId) {
 				alert('Veuillez sélectionner un widget Carte dans le volet des paramètres (à droite) pour activer les outils de dessin.');
 			}
 			return;
@@ -10527,15 +10616,18 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 				aria-label={this.nls('widgetDrawingAndAnnotationToolsWidget')}
 			>
 				{/* Attach to Map View */}
-				{this.props.useMapWidgetIds && this.props.useMapWidgetIds.length > 0 && (
-					<JimuMapViewComponent
-						useMapWidgetId={this.props.useMapWidgetIds[0]}
-						onActiveViewChange={this.activeViewChangeHandler}
-					/>
-				)}
+				{(() => {
+					const effectiveMapWidgetId = this.getEffectiveMapWidgetId();
+					return effectiveMapWidgetId ? (
+						<JimuMapViewComponent
+							useMapWidgetId={effectiveMapWidgetId}
+							onActiveViewChange={this.activeViewChangeHandler}
+						/>
+					) : null;
+				})()}
 
 				{/* Notice if no map is connected */}
-				{(!this.props.useMapWidgetIds || this.props.useMapWidgetIds.length === 0) && (
+				{!this.getEffectiveMapWidgetId() && (
 					<div style={{ margin: '8px', padding: '10px 12px', background: '#e3f2fd', color: '#0d47a1', border: '1px solid #90caf9', borderRadius: '4px', fontSize: '13px', lineHeight: '1.4' }}>
 						<strong>ℹ️ Carte requise :</strong><br />
 						Veuillez sélectionner votre widget <em>Carte</em> dans le volet des paramètres (à droite) pour activer les outils de dessin.
