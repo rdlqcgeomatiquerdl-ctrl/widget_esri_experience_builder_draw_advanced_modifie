@@ -8201,6 +8201,9 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 		// Validate SketchViewModel before proceeding with drawing tools
 		if (toolBtn !== '' && (!this.sketchViewModel || !this.sketchViewModel.view)) {
 			console.warn('SketchViewModel not available for drawing tool activation');
+			if (!this.props.useMapWidgetIds || this.props.useMapWidgetIds.length === 0) {
+				alert('Veuillez sélectionner un widget Carte dans le volet des paramètres (à droite) pour activer les outils de dessin.');
+			}
 			return;
 		}
 
@@ -10524,11 +10527,19 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 				aria-label={this.nls('widgetDrawingAndAnnotationToolsWidget')}
 			>
 				{/* Attach to Map View */}
-				{this.props.useMapWidgetIds && this.props.useMapWidgetIds.length === 1 && (
+				{this.props.useMapWidgetIds && this.props.useMapWidgetIds.length > 0 && (
 					<JimuMapViewComponent
 						useMapWidgetId={this.props.useMapWidgetIds[0]}
 						onActiveViewChange={this.activeViewChangeHandler}
 					/>
+				)}
+
+				{/* Notice if no map is connected */}
+				{(!this.props.useMapWidgetIds || this.props.useMapWidgetIds.length === 0) && (
+					<div style={{ margin: '8px', padding: '10px 12px', background: '#e3f2fd', color: '#0d47a1', border: '1px solid #90caf9', borderRadius: '4px', fontSize: '13px', lineHeight: '1.4' }}>
+						<strong>ℹ️ Carte requise :</strong><br />
+						Veuillez sélectionner votre widget <em>Carte</em> dans le volet des paramètres (à droite) pour activer les outils de dessin.
+					</div>
 				)}
 
 				{/* Header row: tab list (hidden when My Drawings is disabled) plus the Help button at the top right */}
