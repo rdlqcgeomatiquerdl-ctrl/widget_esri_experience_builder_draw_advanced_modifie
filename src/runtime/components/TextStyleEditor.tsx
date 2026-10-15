@@ -1,4 +1,4 @@
-﻿import { React, hooks } from 'jimu-core';
+import { React, hooks } from 'jimu-core';
 import defaultMessages from '../translations/default';
 import {
     Button,
@@ -295,7 +295,7 @@ export const TextStyleEditor: React.FC<Props> = ({ currentTextSymbol, updateSymb
             // Centralized auto-generated ID detection
             const isAutoId = (val: string | null | undefined): boolean => {
                 if (!val) return false;
-                const v = val.trim();
+                const v = String(val).trim();
                 return v.startsWith('g_') ||
                     v.startsWith('auto_') ||
                     v.startsWith('imported_') ||

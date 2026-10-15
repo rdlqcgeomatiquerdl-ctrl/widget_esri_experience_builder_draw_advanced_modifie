@@ -37,6 +37,8 @@ const proj4: any = proj4Module.default || proj4Module;
 if (proj4 && typeof proj4.defs === 'function') {
     proj4.defs("EPSG:2949", "+proj=tmerc +lat_0=0 +lon_0=-70.5 +k=0.9999 +x_0=304800 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs");
     proj4.defs("urn:ogc:def:crs:EPSG::2949", proj4.defs("EPSG:2949"));
+    proj4.defs("EPSG:32187", "+proj=tmerc +lat_0=0 +lon_0=-70.5 +k=0.9999 +x_0=304800 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs");
+    proj4.defs("urn:ogc:def:crs:EPSG::32187", proj4.defs("EPSG:32187"));
     proj4.defs("EPSG:4269", "+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs +type=crs");
     proj4.defs("urn:ogc:def:crs:EPSG::4269", proj4.defs("EPSG:4269"));
     proj4.defs("EPSG:4617", "+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs +type=crs");
@@ -1279,8 +1281,8 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     return [coordX, coordY];
                 }
 
-                // If target is EPSG:2949 (MTM Zone 7 meters)
-                if (targetWkid === 2949) {
+                // If target is EPSG:2949 or EPSG:32187 (Quebec MTM Zone 7 meters)
+                if (targetWkid === 2949 || targetWkid === 32187) {
                     // Check if already in valid range for Quebec MTM Zone 7 meters
                     if (coordX >= 100000 && coordX <= 800000 && coordY >= 4000000 && coordY <= 7000000) {
                         return [coordX, coordY];
@@ -1296,8 +1298,8 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                         }
                     }
 
-                    // Geographic degrees (WGS84)
-                    if (geomWkid === 4326 || (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90)) {
+                    // Geographic degrees (WGS84 / NAD83: lon -180..180, lat -90..90)
+                    if (geomWkid === 4326 || geomWkid === 4269 || geomWkid === 4617 || (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90)) {
                         try {
                             const pt = proj4('EPSG:4326', 'EPSG:2949').forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
@@ -1321,10 +1323,45 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     }
                 } else if (targetWkid === 3857 || targetWkid === 102100) {
                     // Target is Web Mercator
+                    // Check if already in valid Web Mercator meter range
+                    if (Math.abs(coordX) > 1000000 || Math.abs(coordY) > 1000000) {
+                        return [coordX, coordY];
+                    }
+
+                    // Check if in Quebec MTM Zone 7 meters
                     if (coordX >= 100000 && coordX <= 800000 && coordY >= 4000000 && coordY <= 7000000) {
                         try {
                             const pt = proj4('EPSG:2949', 'EPSG:3857').forward([coordX, coordY]);
-                            return [pt[0], pt[1]];
+                            if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
+                                return [pt[0], pt[1]];
+                            }
+                        } catch (e) {}
+                    }
+
+                    // Geographic degrees (WGS84 / NAD83: lon -180..180, lat -90..90)
+                    if (geomWkid === 4326 || geomWkid === 4269 || geomWkid === 4617 || (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90)) {
+                        try {
+                            const pt = proj4('EPSG:4326', 'EPSG:3857').forward([coordX, coordY]);
+                            if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
+                                return [pt[0], pt[1]];
+                            }
+                        } catch (e) {}
+                    }
+                } else if (targetWkid === 4326 || targetWkid === 4269 || targetWkid === 4617) {
+                    // Target is geographic degrees
+                    if (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90) {
+                        return [coordX, coordY];
+                    }
+                    if (coordX >= 100000 && coordX <= 800000 && coordY >= 4000000 && coordY <= 7000000) {
+                        try {
+                            const pt = proj4('EPSG:2949', 'EPSG:4326').forward([coordX, coordY]);
+                            if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [pt[0], pt[1]];
+                        } catch (e) {}
+                    }
+                    if (Math.abs(coordX) > 1000000 || Math.abs(coordY) > 1000000) {
+                        try {
+                            const pt = proj4('EPSG:3857', 'EPSG:4326').forward([coordX, coordY]);
+                            if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [pt[0], pt[1]];
                         } catch (e) {}
                     }
                 }
@@ -1808,7 +1845,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                                     return [x, y];
                                 })
                             );
-                            return { type: 'polyline', paths, spatialReference: targetSR } as any;
+                            return new Polyline({ paths, spatialReference: targetSR });
                         }
                         case 'polygon': {
                             const rings = wgs84Geometry.rings.map((ring: number[][]) =>
@@ -1817,7 +1854,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                                     return [x, y];
                                 })
                             );
-                            return { type: 'polygon', rings, spatialReference: targetSR } as any;
+                            return new Polygon({ rings, spatialReference: targetSR });
                         }
                     }
                 } catch (proj4Error) {
@@ -1863,11 +1900,10 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                         })
                     );
 
-                    return {
-                        type: 'polyline',
+                    return new Polyline({
                         paths: convertedPaths,
                         spatialReference: targetSR
-                    } as any;
+                    });
 
                 case 'polygon':
                     const polygon = wgs84Geometry as any;
@@ -1878,11 +1914,10 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                         })
                     );
 
-                    return {
-                        type: 'polygon',
+                    return new Polygon({
                         rings: convertedRings,
                         spatialReference: targetSR
-                    } as any;
+                    });
 
                 default:
                     console.warn(`Cannot project geometry type: ${wgs84Geometry.type}`);
@@ -1899,10 +1934,8 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
             return { x: lon, y: lat };
         }
 
-        //console.log(`Converting WGS84 coordinates ${lon}, ${lat} to WKID: ${wkid}`);
-
-        // EPSG:2949 (NAD83 CSRS MTM Zone 7 - Rivière-du-Loup / Quebec)
-        if (wkid === 2949) {
+        // EPSG:2949 / EPSG:32187 (NAD83 CSRS MTM Zone 7 - Rivière-du-Loup / Quebec)
+        if (wkid === 2949 || wkid === 32187) {
             try {
                 const [x, y] = proj4('EPSG:4326', 'EPSG:2949').forward([lon, lat]);
                 return { x, y };
@@ -1910,6 +1943,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                 console.warn('proj4 EPSG:4326 -> EPSG:2949 failed:', e);
             }
         }
+
 
         // Web Mercator
         if (wkid === 3857 || wkid === 102100) {
@@ -3624,10 +3658,14 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
             this._isImporting = true;
 
             // Call existing importKML logic
-            await this.importKML(content);
+            const importedCount = await this.importKML(content);
 
             // Refresh drawings list to show imported items immediately
             await this.refreshDrawingsFromLayer();
+
+            if (importedCount && importedCount > 0) {
+                this.zoomToImportedFeatures(importedCount);
+            }
 
             // Close dialog and reset
             this.closeImportDialog();
@@ -7640,7 +7678,7 @@ ${lineStrings}
                             !gra.attributes?.isPreviewBuffer &&
                             !gra.attributes?.isMeasurementLabel &&
                             !gra.attributes?.hideFromList &&
-                            !gra.attributes?.uniqueId?.startsWith('buffer_') &&
+                            !String(gra.attributes?.uniqueId || '').startsWith('buffer_') &&
                             !(gra.geometry?.type === 'point' &&
                                 gra.symbol?.type === 'text' &&
                                 gra.attributes?.isMeasurementLabel)
@@ -7780,7 +7818,7 @@ ${lineStrings}
                             !gra.attributes?.isPreviewBuffer &&
                             !gra.attributes?.isMeasurementLabel &&
                             !gra.attributes?.hideFromList &&
-                            !gra.attributes?.uniqueId?.startsWith('buffer_')
+                            !String(gra.attributes?.uniqueId || '').startsWith('buffer_')
                         );
 
                         if (selectable.length > 0) {
@@ -7803,7 +7841,7 @@ ${lineStrings}
                             !gra.attributes?.isPreviewBuffer &&
                             !gra.attributes?.isMeasurementLabel &&
                             !gra.attributes?.hideFromList &&
-                            !gra.attributes?.uniqueId?.startsWith('buffer_')
+                            !String(gra.attributes?.uniqueId || '').startsWith('buffer_')
                         );
 
                         if (selectable.length > 0) {
@@ -10902,8 +10940,13 @@ ${lineStrings}
 
         if (styleUrl) {
             // Remove the # from styleUrl and find the style
-            const styleId = styleUrl.replace('#', '');
-            styleElement = kmlDoc.querySelector(`Style[id="${styleId}"]`);
+            const styleId = styleUrl.replace('#', '').trim();
+            styleElement = kmlDoc.querySelector(`Style[id="${styleId}"]`) ||
+                           kmlDoc.querySelector(`[id="${styleId}"]`);
+            if (!styleElement) {
+                const allStyles = Array.from(kmlDoc.querySelectorAll('Style'));
+                styleElement = allStyles.find(s => s.getAttribute('id') === styleId || (s as any).id === styleId) || null;
+            }
         }
 
         // If no styleUrl or style not found, check for inline Style
@@ -11029,13 +11072,16 @@ ${lineStrings}
         // Try Point
         const pointElement = placemark.querySelector('Point coordinates');
         if (pointElement) {
-            const coords = pointElement.textContent?.trim().split(',');
-            if (coords && coords.length >= 2) {
-                return new Point({
-                    x: parseFloat(coords[0]),
-                    y: parseFloat(coords[1]),
-                    spatialReference: { wkid: 4326 }
-                });
+            const coordsText = pointElement.textContent?.trim();
+            if (coordsText) {
+                const points = this.parseKMLCoordinates(coordsText);
+                if (points && points.length >= 1) {
+                    return new Point({
+                        x: points[0][0],
+                        y: points[0][1],
+                        spatialReference: { wkid: 4326 }
+                    });
+                }
             }
         }
 
@@ -11044,30 +11090,30 @@ ${lineStrings}
         if (lineElement) {
             const coordsText = lineElement.textContent?.trim();
             if (coordsText) {
-                const points = coordsText.split(/\s+/).map(coord => {
-                    const [x, y] = coord.split(',').map(parseFloat);
-                    return [x, y];
-                });
-                return new Polyline({
-                    paths: [points],
-                    spatialReference: { wkid: 4326 }
-                });
+                const points = this.parseKMLCoordinates(coordsText);
+                if (points && points.length >= 2) {
+                    return new Polyline({
+                        paths: [points],
+                        spatialReference: { wkid: 4326 }
+                    });
+                }
             }
         }
 
         // Try Polygon
-        const polygonElement = placemark.querySelector('Polygon outerBoundaryIs LinearRing coordinates');
+        const polygonElement = placemark.querySelector('Polygon outerBoundaryIs LinearRing coordinates') ||
+            placemark.querySelector('Polygon LinearRing coordinates') ||
+            placemark.querySelector('Polygon coordinates');
         if (polygonElement) {
             const coordsText = polygonElement.textContent?.trim();
             if (coordsText) {
-                const points = coordsText.split(/\s+/).map(coord => {
-                    const [x, y] = coord.split(',').map(parseFloat);
-                    return [x, y];
-                });
-                return new Polygon({
-                    rings: [points],
-                    spatialReference: { wkid: 4326 }
-                });
+                const points = this.parseKMLCoordinates(coordsText);
+                if (points && points.length >= 3) {
+                    return new Polygon({
+                        rings: [points],
+                        spatialReference: { wkid: 4326 }
+                    });
+                }
             }
         }
 
@@ -11294,7 +11340,7 @@ ${lineStrings}
 
 
     // Add the importKML method with symbology support
-    importKML = async (kmlText: string) => {
+    importKML = async (kmlText: string): Promise<number> => {
         try {
             // Parse KML using browser's DOMParser
             const parser = new DOMParser();
@@ -11310,14 +11356,50 @@ ${lineStrings}
             const placemarks = kmlDoc.querySelectorAll('Placemark');
             let importedCount = 0;
 
+            const mapSR = this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference;
+            const mapWkid = mapSR ? (mapSR.wkid || (mapSR as any)?.latestWkid) : null;
+
             for (const placemark of Array.from(placemarks)) {
                 const name = placemark.querySelector('name')?.textContent || __t("importedFeatureValue", { value: importedCount + 1 });
                 const description = this.extractKMLDescription(placemark);
 
-                // Parse geometry
-                const geometry = await this.parseKMLGeometry(placemark);
+                // Parse geometry (in WGS84 EPSG:4326 lat/long)
+                const rawGeometry = await this.parseKMLGeometry(placemark);
 
-                if (geometry) {
+                if (rawGeometry) {
+                    let geometry = rawGeometry;
+
+                    // Project geometry from WGS84 (EPSG:4326) to the map spatial reference (e.g. EPSG:2949, EPSG:3857, etc.)
+                    if (mapSR && mapWkid && mapWkid !== 4326) {
+                        try {
+                            if (mapWkid === 3857 || mapWkid === 102100) {
+                                geometry = webMercatorUtils.geographicToWebMercator(rawGeometry) || rawGeometry;
+                            } else if (mapWkid === 4269 || mapWkid === 4617) {
+                                if (rawGeometry.type === 'point') {
+                                    geometry = new Point({ x: rawGeometry.x, y: rawGeometry.y, spatialReference: mapSR });
+                                } else if (rawGeometry.type === 'polyline') {
+                                    geometry = new Polyline({ paths: rawGeometry.paths, spatialReference: mapSR });
+                                } else if (rawGeometry.type === 'polygon') {
+                                    geometry = new Polygon({ rings: rawGeometry.rings, spatialReference: mapSR });
+                                }
+                            } else {
+                                const projected = await this.projectGeometryFromWGS84(rawGeometry, mapSR);
+                                if (projected) {
+                                    geometry = projected;
+                                } else {
+                                    geometry = this.sanitizeAndProjectGeometry(rawGeometry);
+                                }
+                            }
+                        } catch (projErr) {
+                            console.warn('Error projecting KML geometry to map spatial reference, trying fallback:', projErr);
+                            geometry = this.sanitizeAndProjectGeometry(rawGeometry);
+                        }
+                    }
+
+                    if (geometry && mapSR) {
+                        geometry.spatialReference = mapSR;
+                    }
+
                     // Parse style from KML
                     const kmlStyle = this.parseKMLStyle(placemark, kmlDoc);
 
@@ -11335,9 +11417,9 @@ ${lineStrings}
                     try {
                         const dataNodes = placemark.querySelectorAll('ExtendedData Data');
                         dataNodes.forEach(data => {
-                            const name = data.getAttribute('name');
+                            const dName = data.getAttribute('name');
                             const value = data.querySelector('value')?.textContent;
-                            if (name === 'notes' && value) {
+                            if (dName === 'notes' && value) {
                                 notes = value;
                             }
                         });
@@ -11345,12 +11427,15 @@ ${lineStrings}
                         console.warn('Error extracting notes from KML:', error);
                     }
 
+                    const uniqueId = `kml_${Date.now()}_${importedCount}_${Math.random().toString(36).substring(2, 9)}`;
+
                     const attributes: any = {
-                        name: name,
-                        description: description,
-                        uniqueId: Date.now() + Math.random(),
+                        name: String(name),
+                        description: String(description || ''),
+                        uniqueId: uniqueId,
                         createdDate: createdDate,
                         importSource: 'kml',
+                        type: String(geometry.type),
                         // Store the original KML style for potential re-export
                         _kmlStyle: kmlStyle ? JSON.stringify(kmlStyle) : null,
                         // Store whether date came from KML or was generated
@@ -11368,12 +11453,15 @@ ${lineStrings}
                         symbol: symbol as any
                     });
 
-                    (this.sketchViewModel.layer as any).add(graphic);
+                    const targetLayer = this.props.graphicsLayer || this.sketchViewModel?.layer;
+                    if (targetLayer) {
+                        (targetLayer as any).add(graphic);
+                    }
                     importedCount++;
                 }
             }
 
-            //console.log(`✅ Successfully imported ${importedCount} features with symbology from KML`);
+            return importedCount;
         } catch (error) {
             console.error('KML import error:', error);
             throw new Error('Failed to import KML file.');
@@ -12175,11 +12263,12 @@ ${lineStrings}
 
         setTimeout(async () => {
             try {
-                const allGraphics = (this.sketchViewModel.layer as any).graphics.toArray();
+                const targetLayer = this.props.graphicsLayer || this.sketchViewModel?.layer;
+                const allGraphics = (targetLayer as any)?.graphics?.toArray() || [];
                 const importedGraphics = allGraphics.slice(-importedCount);
 
                 if (importedGraphics.length > 0) {
-                    const geometries = importedGraphics.map(g => g.geometry).filter(g => g != null);
+                    const geometries = importedGraphics.map((g: any) => g.geometry).filter((g: any) => g != null);
 
                     if (geometries.length > 0) {
                         let extent: any = null;
@@ -12188,7 +12277,11 @@ ${lineStrings}
                             if (ext) extent = extent ? extent.union(ext) : ext.clone();
                         }
                         if (extent) {
-                            await this.props.jimuMapView.view.goTo(extent.expand(1.2), {
+                            await this.props.jimuMapView.view.goTo(extent.expand(1.3), {
+                                duration: 1000
+                            });
+                        } else {
+                            await this.props.jimuMapView.view.goTo(geometries, {
                                 duration: 1000
                             });
                         }
@@ -12857,7 +12950,7 @@ ${lineStrings}
             }
 
             const attributes: any = {
-                uniqueId: feature.properties.id || `imported_geojson_${Date.now()}_${index}`,
+                uniqueId: String(feature.properties.id || `imported_geojson_${Date.now()}_${index}`),
                 name: this.ensureUniqueName(defaultName),
                 createdDate,
                 geometryType: feature.geometry.type
@@ -14580,7 +14673,7 @@ ${lineStrings}
             let actualText = '';
 
             // Priority 1: Check if graphic.attributes.name contains real text (not an auto-generated ID)
-            const attributeName = graphic.attributes?.name || '';
+            const attributeName = String(graphic.attributes?.name || '');
             const isAutoGeneratedName = attributeName.startsWith('g_') ||
                 attributeName.startsWith('auto_') ||
                 attributeName.startsWith('imported_') ||
@@ -14594,7 +14687,7 @@ ${lineStrings}
 
             // Priority 2: Check symbol.text (if it's not an auto-generated ID)
             if (!actualText) {
-                const symbolText = textSymbol.text || '';
+                const symbolText = String(textSymbol.text || '');
                 const isAutoGeneratedSymbolText = symbolText.startsWith('g_') ||
                     symbolText.startsWith('auto_') ||
                     symbolText.match(/^[a-z]_\d+_[a-z0-9]+$/i);

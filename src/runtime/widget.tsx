@@ -52,7 +52,7 @@ import Multipoint from 'esri/geometry/Multipoint';
 import Point from 'esri/geometry/Point';
 import Circle from 'esri/geometry/Circle';
 import * as geometryEngine from 'esri/geometry/geometryEngine';
-console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.2) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
+console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.3) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
 import {
 	densifyOperator,
 	lengthOperator,
@@ -3189,7 +3189,7 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 		const bufferGraphics = allGraphics.filter(g =>
 			g.attributes?.isBuffer ||
 			(g as any).isBufferDrawing ||
-			g.attributes?.uniqueId?.startsWith('buffer_')
+			String(g.attributes?.uniqueId || '').startsWith('buffer_')
 		);
 
 		const bufferGraphic = bufferGraphics.find(g =>
@@ -3222,7 +3222,7 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 		return this.drawLayer.graphics.toArray().some(g =>
 			(g.attributes?.isBuffer ||
 				(g as any).isBufferDrawing ||
-				g.attributes?.uniqueId?.startsWith('buffer_')) &&
+				String(g.attributes?.uniqueId || '').startsWith('buffer_')) &&
 			(g.attributes?.parentId === uniqueId ||
 				g.attributes?.sourceGraphicId === uniqueId ||
 				(g as any).sourceGraphicId === uniqueId) &&
@@ -5186,7 +5186,7 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 						if (graphic.attributes?.isPreviewBuffer ||
 							graphic.attributes?.isBuffer ||
 							graphic.attributes?.isBufferDrawing ||
-							graphic.attributes?.uniqueId?.startsWith('buffer_')) return false;
+							String(graphic.attributes?.uniqueId || '').startsWith('buffer_')) return false;
 
 						// Exclude selection overlays
 						if (graphic.attributes?.isSelectionOverlay) return false;
@@ -5337,7 +5337,7 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 						if (graphic.attributes?.isPreviewBuffer ||
 							graphic.attributes?.isBuffer ||
 							graphic.attributes?.isBufferDrawing ||
-							graphic.attributes?.uniqueId?.startsWith('buffer_')) return false;
+							String(graphic.attributes?.uniqueId || '').startsWith('buffer_')) return false;
 
 						// Exclude selection overlays
 						if (graphic.attributes?.isSelectionOverlay) return false;
@@ -7391,7 +7391,7 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 						if (gra.attributes?.isBuffer ||
 							gra.attributes?.isBufferDrawing ||
 							gra.attributes?.isPreviewBuffer ||
-							gra.attributes?.uniqueId?.startsWith('buffer_') ||
+							String(gra.attributes?.uniqueId || '').startsWith('buffer_') ||
 							gra.attributes?.isMeasurementLabel ||
 							gra.attributes?.hideFromList ||
 							(gra.geometry?.type === 'point' && gra.symbol?.type === 'text' && gra.attributes?.isMeasurementLabel)) {
