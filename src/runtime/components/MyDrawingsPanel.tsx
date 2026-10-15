@@ -12768,6 +12768,8 @@ ${lineStrings}
                 return;
             }
 
+            const sourceSR = await this.detectSpatialReference(geoJSON.crs);
+
             // 🔧 FIX: Set importing flag to ignore ALL graphics change events during import
             this._isImporting = true;
 
@@ -12802,7 +12804,7 @@ ${lineStrings}
                 //console.log(`Processing feature ${i + 1} of ${mainFeatures.length}`);
 
                 try {
-                    const g = await this.convertGeoJSONFeatureToGraphic(mainFeatures[i], i);
+                    const g = await this.convertGeoJSONFeatureToGraphic(mainFeatures[i], i, sourceSR);
 
                     if (g) {
                         this.props.graphicsLayer.add(g);
@@ -12834,7 +12836,7 @@ ${lineStrings}
 
                 try {
                     const f = labelFeatures[j];
-                    const labelGraphic = await this.convertGeoJSONFeatureToGraphic(f, j + mainFeatures.length);
+                    const labelGraphic = await this.convertGeoJSONFeatureToGraphic(f, j + mainFeatures.length, sourceSR);
 
                     if (labelGraphic) {
                         const parentId = labelGraphic.attributes?.parentGraphicId;
@@ -12920,14 +12922,14 @@ ${lineStrings}
         }
     };
 
-    private convertGeoJSONFeatureToGraphic = async (feature: any, index: number): Promise<ExtendedGraphic | null> => {
+    private convertGeoJSONFeatureToGraphic = async (feature: any, index: number, sourceSR?: any): Promise<ExtendedGraphic | null> => {
         try {
             if (!feature?.geometry || !feature?.properties) {
                 console.warn(`Feature ${index} missing geometry or properties`);
                 return null;
             }
 
-            const arcgisGeometry = await this.convertGeoJSONGeometryToArcGIS(feature.geometry);
+            const arcgisGeometry = await this.convertGeoJSONGeometryToArcGIS(feature.geometry, sourceSR);
             if (!arcgisGeometry) {
                 console.warn(`Failed to convert geometry for feature ${index}`);
                 return null;
@@ -13075,88 +13077,166 @@ ${lineStrings}
     };
 
     // Convert GeoJSON geometry to ArcGIS geometry
-    private convertGeoJSONGeometryToArcGIS = async (geoJsonGeometry: any): Promise<any | null> => {
+    private convertGeoJSONGeometryToArcGIS = async (geoJsonGeometry: any, sourceSR?: any): Promise<any | null> => {
         try {
+            if (!geoJsonGeometry) return null;
+
+            const extractSampleCoordinate = (geom: any): [number, number] | null => {
+                if (!geom || !geom.coordinates) return null;
+                let curr = geom.coordinates;
+                while (Array.isArray(curr) && curr.length > 0 && Array.isArray(curr[0])) {
+                    curr = curr[0];
+                }
+                if (Array.isArray(curr) && curr.length >= 2 && typeof curr[0] === 'number' && typeof curr[1] === 'number') {
+                    return [curr[0], curr[1]];
+                }
+                return null;
+            };
+
+            const sample = extractSampleCoordinate(geoJsonGeometry);
             const currentSR = this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference || new SpatialReference({ wkid: 2949 });
+            const targetWkid = currentSR ? (currentSR.wkid || (currentSR as any)?.latestWkid || 2949) : 2949;
 
-            // First convert the GeoJSON coordinates to a temporary WGS84 geometry
-            let wgs84Geometry: any;
-            const wgs84SR = new SpatialReference({ wkid: 4326 });
+            const fileWkid = sourceSR ? (sourceSR.wkid || (sourceSR as any)?.latestWkid) : null;
 
+            let isMTM2949 = fileWkid === 2949 || fileWkid === 32187;
+            let isWebMercator = fileWkid === 3857 || fileWkid === 102100;
+            let isDegrees = fileWkid === 4326 || fileWkid === 4269;
+
+            if (sample) {
+                const [sx, sy] = sample;
+                if (sx >= 100000 && sx <= 800000 && sy >= 4000000 && sy <= 7000000) {
+                    // Coordinates are in Quebec MTM Zone 7 meters (Rivière-du-Loup)
+                    isMTM2949 = true;
+                    isWebMercator = false;
+                    isDegrees = false;
+                } else if (Math.abs(sx) > 1000000 || Math.abs(sy) > 1000000) {
+                    isWebMercator = true;
+                    isMTM2949 = false;
+                    isDegrees = false;
+                } else if (Math.abs(sx) <= 180 && Math.abs(sy) <= 90) {
+                    isDegrees = true;
+                    isMTM2949 = false;
+                    isWebMercator = false;
+                }
+            }
+
+            // Case 1: Coordinates are ALREADY in Quebec MTM Zone 7 meters and map target is MTM Zone 7 (EPSG:2949 / 32187)
+            if (isMTM2949 && (targetWkid === 2949 || targetWkid === 32187)) {
+                switch (geoJsonGeometry.type) {
+                    case 'Point':
+                        return new Point({ x: geoJsonGeometry.coordinates[0], y: geoJsonGeometry.coordinates[1], spatialReference: currentSR });
+                    case 'LineString':
+                        return new Polyline({ paths: [geoJsonGeometry.coordinates], spatialReference: currentSR });
+                    case 'MultiLineString':
+                        return new Polyline({ paths: geoJsonGeometry.coordinates, spatialReference: currentSR });
+                    case 'Polygon':
+                        return new Polygon({ rings: geoJsonGeometry.coordinates, spatialReference: currentSR });
+                    case 'MultiPolygon':
+                        return new Polygon({ rings: geoJsonGeometry.coordinates.flat(1), spatialReference: currentSR });
+                    default:
+                        console.warn(`Unsupported GeoJSON geometry type: ${geoJsonGeometry.type}`);
+                        return null;
+                }
+            }
+
+            // Case 2: Coordinates are in Web Mercator meters and map target is EPSG:2949
+            if (isWebMercator && (targetWkid === 2949 || targetWkid === 32187)) {
+                const transform = proj4('EPSG:3857', 'EPSG:2949');
+                const projectCoord = (c: number[]) => {
+                    const p = transform.forward([c[0], c[1]]);
+                    return c.length > 2 ? [p[0], p[1], c[2]] : p;
+                };
+                switch (geoJsonGeometry.type) {
+                    case 'Point': {
+                        const p = transform.forward(geoJsonGeometry.coordinates);
+                        return new Point({ x: p[0], y: p[1], spatialReference: currentSR });
+                    }
+                    case 'LineString':
+                        return new Polyline({ paths: [geoJsonGeometry.coordinates.map(projectCoord)], spatialReference: currentSR });
+                    case 'MultiLineString':
+                        return new Polyline({ paths: geoJsonGeometry.coordinates.map((part: any[]) => part.map(projectCoord)), spatialReference: currentSR });
+                    case 'Polygon':
+                        return new Polygon({ rings: geoJsonGeometry.coordinates.map((ring: any[]) => ring.map(projectCoord)), spatialReference: currentSR });
+                    case 'MultiPolygon':
+                        return new Polygon({ rings: geoJsonGeometry.coordinates.flat(1).map((ring: any[]) => ring.map(projectCoord)), spatialReference: currentSR });
+                    default:
+                        return null;
+                }
+            }
+
+            // Case 3: Coordinates are in Geographic degrees (WGS84 / NAD83) and map target is EPSG:2949
+            if (isDegrees && (targetWkid === 2949 || targetWkid === 32187)) {
+                const transform = proj4('EPSG:4326', 'EPSG:2949');
+                const projectCoord = (c: number[]) => {
+                    const p = transform.forward([c[0], c[1]]);
+                    return c.length > 2 ? [p[0], p[1], c[2]] : p;
+                };
+                switch (geoJsonGeometry.type) {
+                    case 'Point': {
+                        const p = transform.forward(geoJsonGeometry.coordinates);
+                        return new Point({ x: p[0], y: p[1], spatialReference: currentSR });
+                    }
+                    case 'LineString':
+                        return new Polyline({ paths: [geoJsonGeometry.coordinates.map(projectCoord)], spatialReference: currentSR });
+                    case 'MultiLineString':
+                        return new Polyline({ paths: geoJsonGeometry.coordinates.map((part: any[]) => part.map(projectCoord)), spatialReference: currentSR });
+                    case 'Polygon':
+                        return new Polygon({ rings: geoJsonGeometry.coordinates.map((ring: any[]) => ring.map(projectCoord)), spatialReference: currentSR });
+                    case 'MultiPolygon':
+                        return new Polygon({ rings: geoJsonGeometry.coordinates.flat(1).map((ring: any[]) => ring.map(projectCoord)), spatialReference: currentSR });
+                    default:
+                        return null;
+                }
+            }
+
+            // Case 4: Coordinates in MTM Zone 7, but map target is Web Mercator (3857)
+            if (isMTM2949 && (targetWkid === 3857 || targetWkid === 102100)) {
+                const transform = proj4('EPSG:2949', 'EPSG:3857');
+                const projectCoord = (c: number[]) => {
+                    const p = transform.forward([c[0], c[1]]);
+                    return c.length > 2 ? [p[0], p[1], c[2]] : p;
+                };
+                switch (geoJsonGeometry.type) {
+                    case 'Point': {
+                        const p = transform.forward(geoJsonGeometry.coordinates);
+                        return new Point({ x: p[0], y: p[1], spatialReference: currentSR });
+                    }
+                    case 'LineString':
+                        return new Polyline({ paths: [geoJsonGeometry.coordinates.map(projectCoord)], spatialReference: currentSR });
+                    case 'MultiLineString':
+                        return new Polyline({ paths: geoJsonGeometry.coordinates.map((part: any[]) => part.map(projectCoord)), spatialReference: currentSR });
+                    case 'Polygon':
+                        return new Polygon({ rings: geoJsonGeometry.coordinates.map((ring: any[]) => ring.map(projectCoord)), spatialReference: currentSR });
+                    case 'MultiPolygon':
+                        return new Polygon({ rings: geoJsonGeometry.coordinates.flat(1).map((ring: any[]) => ring.map(projectCoord)), spatialReference: currentSR });
+                    default:
+                        return null;
+                }
+            }
+
+            // General Fallback: create geometry and sanitize/project
+            let geomInstance: any;
             switch (geoJsonGeometry.type) {
                 case 'Point':
-                    const coords = geoJsonGeometry.coordinates;
-                    wgs84Geometry = new Point({
-                        longitude: coords[0],
-                        latitude: coords[1],
-                        spatialReference: wgs84SR
-                    });
+                    geomInstance = new Point({ x: geoJsonGeometry.coordinates[0], y: geoJsonGeometry.coordinates[1], spatialReference: currentSR });
                     break;
-
                 case 'LineString':
-                    wgs84Geometry = {
-                        type: 'polyline',
-                        paths: [geoJsonGeometry.coordinates],
-                        spatialReference: wgs84SR
-                    } as any;
+                    geomInstance = new Polyline({ paths: [geoJsonGeometry.coordinates], spatialReference: currentSR });
                     break;
-
                 case 'MultiLineString':
-                    wgs84Geometry = {
-                        type: 'polyline',
-                        paths: geoJsonGeometry.coordinates,
-                        spatialReference: wgs84SR
-                    } as any;
+                    geomInstance = new Polyline({ paths: geoJsonGeometry.coordinates, spatialReference: currentSR });
                     break;
-
                 case 'Polygon':
-                    wgs84Geometry = {
-                        type: 'polygon',
-                        rings: geoJsonGeometry.coordinates,
-                        spatialReference: wgs84SR
-                    } as any;
+                    geomInstance = new Polygon({ rings: geoJsonGeometry.coordinates, spatialReference: currentSR });
                     break;
-
+                case 'MultiPolygon':
+                    geomInstance = new Polygon({ rings: geoJsonGeometry.coordinates.flat(1), spatialReference: currentSR });
+                    break;
                 default:
-                    console.warn(`Unsupported GeoJSON geometry type: ${geoJsonGeometry.type}`);
                     return null;
             }
-
-            // If the map is in WGS84, return the geometry as-is
-            const currentWkid = currentSR ? (currentSR.wkid || (currentSR as any).latestWkid || 2949) : 2949;
-            if (currentWkid === 4326) {
-                return wgs84Geometry;
-            }
-
-            // Fast path: WGS84 → Web Mercator (synchronous, no WASM needed)
-            if (currentWkid === 3857 || currentWkid === 102100) {
-                const result = webMercatorUtils.geographicToWebMercator(wgs84Geometry);
-                if (result) return result;
-            }
-
-            // Project from WGS84 to the current map spatial reference
-            const projected = await this.projectGeometryFromWGS84(wgs84Geometry, currentSR);
-            if (projected) {
-                if (currentWkid === 2949 || currentWkid === 32187 || currentWkid === 3857 || currentWkid === 102100) {
-                    let sampleX: number | undefined;
-                    let sampleY: number | undefined;
-                    if (projected.type === 'point') {
-                        sampleX = projected.x;
-                        sampleY = projected.y;
-                    } else if (projected.type === 'polygon' && projected.rings?.[0]?.[0]) {
-                        sampleX = projected.rings[0][0][0];
-                        sampleY = projected.rings[0][0][1];
-                    } else if (projected.type === 'polyline' && projected.paths?.[0]?.[0]) {
-                        sampleX = projected.paths[0][0][0];
-                        sampleY = projected.paths[0][0][1];
-                    }
-                    if (typeof sampleX === 'number' && typeof sampleY === 'number' && Math.abs(sampleX) <= 180 && Math.abs(sampleY) <= 90) {
-                        return this.sanitizeAndProjectGeometry(projected);
-                    }
-                }
-                return projected;
-            }
-            return this.sanitizeAndProjectGeometry(wgs84Geometry);
+            return this.sanitizeAndProjectGeometry(geomInstance);
 
         } catch (error) {
             console.error('Error converting GeoJSON geometry:', error);
