@@ -125,8 +125,8 @@ export const projectOperator = {
     } catch { }
     try {
       if (proj4) {
-        const fromWkid = geom.spatialReference?.wkid || (geom.spatialReference?.isWGS84 ? 4326 : 4326);
-        const toWkid = targetSR?.wkid || (targetSR?.latestWkid) || (targetSR?.isWGS84 ? 4326 : 4326);
+        const fromWkid = geom.spatialReference?.wkid || 4269;
+        const toWkid = targetSR?.wkid || (targetSR?.latestWkid) || 2949;
         if (fromWkid && toWkid && fromWkid !== toWkid) {
           const transform = proj4(`EPSG:${fromWkid}`, `EPSG:${toWkid}`);
           if (typeof geom.x === 'number' && typeof geom.y === 'number') {

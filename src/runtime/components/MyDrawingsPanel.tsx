@@ -955,13 +955,14 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
             };
         }
 
-        // EPSG:2949 (NAD83 CSRS MTM Zone 7 - Rivière-du-Loup / Quebec)
-        if (wkid === 2949) {
+        // EPSG:2949 / EPSG:32187 (NAD83 CSRS MTM Zone 7 - Rivière-du-Loup / Quebec)
+        if (wkid === 2949 || wkid === 32187 || (x >= 100000 && x <= 800000 && y >= 4000000 && y <= 7000000)) {
             try {
-                const [lon, lat] = proj4('EPSG:2949', 'EPSG:4326').forward([x, y]);
+                const srcProj = wkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                const [lon, lat] = proj4(srcProj, 'EPSG:4269').forward([x, y]);
                 return { lon, lat };
             } catch (e) {
-                console.warn('proj4 EPSG:2949 -> EPSG:4326 failed:', e);
+                console.warn(`proj4 ${wkid || 2949} -> EPSG:4269 failed:`, e);
             }
         }
 
@@ -1024,55 +1025,72 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
     };
     private projectGeometryToWGS84Alternative = async (geometry: any): Promise<any | null> => {
         try {
-            const wgs84SR = new SpatialReference({ wkid: 4326 });
+            const outSR = new SpatialReference({ wkid: 4269 });
             const geomWkid = geometry.spatialReference?.wkid;
             const geomLatestWkid = (geometry.spatialReference as any)?.latestWkid;
             const effectiveWkid = geomWkid || geomLatestWkid;
 
-            // Already in WGS84 — return as-is
-            if (effectiveWkid === 4326) return geometry;
+            // Already in EPSG:4269 or EPSG:4326 — return as-is
+            if (effectiveWkid === 4269 || effectiveWkid === 4326) return geometry;
 
-            // Web Mercator → WGS84: synchronous, no WASM needed
+            // Web Mercator → EPSG:4269: proj4 or synchronous
             if (effectiveWkid === 3857 || effectiveWkid === 102100) {
+                try {
+                    const transform = proj4('EPSG:3857', 'EPSG:4269');
+                    if (geometry.type === 'point') {
+                        const [lon, lat] = transform.forward([geometry.x, geometry.y]);
+                        return new Point({ x: lon, y: lat, spatialReference: outSR });
+                    } else if (geometry.type === 'polyline') {
+                        const newPaths = geometry.paths.map((path: number[][]) =>
+                            path.map((pt: number[]) => transform.forward(pt))
+                        );
+                        return new Polyline({ paths: newPaths, spatialReference: outSR });
+                    } else if (geometry.type === 'polygon') {
+                        const newRings = geometry.rings.map((ring: number[][]) =>
+                            ring.map((pt: number[]) => transform.forward(pt))
+                        );
+                        return new Polygon({ rings: newRings, spatialReference: outSR });
+                    }
+                } catch {}
                 const result = webMercatorUtils.webMercatorToGeographic(geometry);
                 if (result) return result;
             }
 
             // proj4 fallback (statically imported — always available)
-            if (effectiveWkid && effectiveWkid !== 4326) {
+            if (effectiveWkid && effectiveWkid !== 4269) {
                 try {
                     const targetEpsg = `EPSG:${effectiveWkid}`;
-                    const transform = proj4(targetEpsg, 'EPSG:4326');
+                    const transform = proj4(targetEpsg, 'EPSG:4269');
 
                     if (geometry.type === 'point') {
                         const [lon, lat] = transform.forward([geometry.x, geometry.y]);
-                        return new Point({ x: lon, y: lat, spatialReference: wgs84SR });
+                        return new Point({ x: lon, y: lat, spatialReference: outSR });
                     } else if (geometry.type === 'polyline') {
                         const newPaths = geometry.paths.map((path: number[][]) =>
                             path.map((pt: number[]) => transform.forward(pt))
                         );
-                        return new Polyline({ paths: newPaths, spatialReference: wgs84SR });
+                        return new Polyline({ paths: newPaths, spatialReference: outSR });
                     } else if (geometry.type === 'polygon') {
                         const newRings = geometry.rings.map((ring: number[][]) =>
                             ring.map((pt: number[]) => transform.forward(pt))
                         );
-                        return new Polygon({ rings: newRings, spatialReference: wgs84SR });
+                        return new Polygon({ rings: newRings, spatialReference: outSR });
                     } else if (geometry.type === 'extent') {
                         const [xmin, ymin] = transform.forward([geometry.xmin, geometry.ymin]);
                         const [xmax, ymax] = transform.forward([geometry.xmax, geometry.ymax]);
-                        return { type: 'extent', xmin, ymin, xmax, ymax, spatialReference: wgs84SR };
+                        return { type: 'extent', xmin, ymin, xmax, ymax, spatialReference: outSR };
                     }
                 } catch (proj4Error) {
-                    console.warn('proj4 WGS84 export failed:', proj4Error);
+                    console.warn('proj4 EPSG:4269 export failed:', proj4Error);
                 }
             }
 
             // Last resort: return the geometry; convertToStandardGeoJSON will null-check
-            console.warn('All WGS84 projection attempts failed for WKID', effectiveWkid);
+            console.warn('All EPSG:4269 projection attempts failed for WKID', effectiveWkid);
             return this.manualProjectionFallback(geometry);
 
         } catch (error) {
-            console.error('Error projecting geometry to WGS84:', error);
+            console.error('Error projecting geometry to EPSG:4269:', error);
             return this.manualProjectionFallback(geometry);
         }
     };
@@ -1084,7 +1102,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
         const mapSR = geometry.spatialReference;
 
         if (!mapSR) {
-            console.warn('No spatial reference found, assuming WGS84');
+            console.warn('No spatial reference found, assuming EPSG:4269');
             return geometry;
         }
 
@@ -1097,7 +1115,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     return new Point({
                         longitude: convertedCoords.lon,
                         latitude: convertedCoords.lat,
-                        spatialReference: { wkid: 4326 }
+                        spatialReference: { wkid: 4269 }
                     });
 
                 case 'polyline':
@@ -1112,7 +1130,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     return {
                         type: 'polyline',
                         paths: convertedPaths,
-                        spatialReference: { wkid: 4326 }
+                        spatialReference: { wkid: 4269 }
                     } as any;
 
                 case 'polygon':
@@ -1127,7 +1145,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     return {
                         type: 'polygon',
                         rings: convertedRings,
-                        spatialReference: { wkid: 4326 }
+                        spatialReference: { wkid: 4269 }
                     } as any;
 
                 case 'extent':
@@ -1141,7 +1159,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                         ymin: sw.lat,
                         xmax: ne.lon,
                         ymax: ne.lat,
-                        spatialReference: { wkid: 4326 }
+                        spatialReference: { wkid: 4269 }
                     } as any;
 
                 default:
@@ -1187,13 +1205,13 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     console.warn('proj4 3857->2949 failed:', e);
                 }
             }
-            // If in WGS84 (EPSG:4326) or geographic coordinates
-            if (geomWkid === 4326 || (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90)) {
+            // If in EPSG:4269 (NAD83 Lat/Long) or geographic coordinates
+            if (geomWkid === 4269 || geomWkid === 4617 || geomWkid === 4326 || (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90)) {
                 try {
-                    const pt = proj4('EPSG:4326', 'EPSG:2949').forward([coordX, coordY]);
+                    const pt = proj4('EPSG:4269', 'EPSG:2949').forward([coordX, coordY]);
                     return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
                 } catch (e) {
-                    console.warn('proj4 4326->2949 failed:', e);
+                    console.warn('proj4 4269->2949 failed:', e);
                 }
             }
             if (geomWkid) {
@@ -1302,22 +1320,24 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                         }
                     }
 
-                    // Geographic degrees (WGS84 / NAD83: lon -180..180, lat -90..90)
+                    // Geographic degrees (EPSG:4269 NAD83 Lat/Long: lon -180..180, lat -90..90)
                     if (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90) {
                         try {
-                            const pt = proj4('EPSG:4326', 'EPSG:2949').forward([coordX, coordY]);
+                            const targetProj = targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                            const pt = proj4('EPSG:4269', targetProj).forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
                                 return [pt[0], pt[1]];
                             }
                         } catch (e) {
-                            console.warn('proj4 4326->2949 failed in sanitizeAndProjectGeometry:', e);
+                            console.warn('proj4 4269->2949 failed in sanitizeAndProjectGeometry:', e);
                         }
                     }
 
                     // Web Mercator meters
                     if (Math.abs(coordX) > 1000000 || Math.abs(coordY) > 1000000) {
                         try {
-                            const pt = proj4('EPSG:3857', 'EPSG:2949').forward([coordX, coordY]);
+                            const targetProj = targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                            const pt = proj4('EPSG:3857', targetProj).forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
                                 return [pt[0], pt[1]];
                             }
@@ -1342,29 +1362,29 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                         } catch (e) {}
                     }
 
-                    // Geographic degrees (WGS84 / NAD83: lon -180..180, lat -90..90)
+                    // Geographic degrees (EPSG:4269 / NAD83: lon -180..180, lat -90..90)
                     if (geomWkid === 4326 || geomWkid === 4269 || geomWkid === 4617 || (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90)) {
                         try {
-                            const pt = proj4('EPSG:4326', 'EPSG:3857').forward([coordX, coordY]);
+                            const pt = proj4('EPSG:4269', 'EPSG:3857').forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
                                 return [pt[0], pt[1]];
                             }
                         } catch (e) {}
                     }
                 } else if (targetWkid === 4326 || targetWkid === 4269 || targetWkid === 4617) {
-                    // Target is geographic degrees
+                    // Target is geographic degrees (EPSG:4269)
                     if (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90) {
                         return [coordX, coordY];
                     }
                     if (coordX >= 100000 && coordX <= 800000 && coordY >= 4000000 && coordY <= 7000000) {
                         try {
-                            const pt = proj4('EPSG:2949', 'EPSG:4326').forward([coordX, coordY]);
+                            const pt = proj4('EPSG:2949', 'EPSG:4269').forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [pt[0], pt[1]];
                         } catch (e) {}
                     }
                     if (Math.abs(coordX) > 1000000 || Math.abs(coordY) > 1000000) {
                         try {
-                            const pt = proj4('EPSG:3857', 'EPSG:4326').forward([coordX, coordY]);
+                            const pt = proj4('EPSG:3857', 'EPSG:4269').forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [pt[0], pt[1]];
                         } catch (e) {}
                     }
@@ -1787,7 +1807,8 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
             // Fast path 1: EPSG:2949 / EPSG:32187 (Quebec MTM Zone 7 meters - Ville de RDL)
             if (targetWkid === 2949 || targetWkid === 32187) {
                 try {
-                    const transform = proj4('EPSG:4326', 'EPSG:2949');
+                    const targetProj = targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                    const transform = proj4('EPSG:4269', targetProj);
                     const targetSRObj = targetSR || new SpatialReference({ wkid: targetWkid });
                     if (wgs84Geometry.type === 'point') {
                         const lon = wgs84Geometry.longitude ?? wgs84Geometry.x;
@@ -1827,12 +1848,12 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
             // map can be in (State Plane, UTM, custom WKT), which proj4 below does not: proj4 ships
             // with only 4326, 4269 and 3857 defined, so `EPSG:2232` threw and the import fell
             // through to a linear approximation that placed features miles off.
-            if (targetWkid && targetWkid !== 4326) {
+            if (targetWkid && targetWkid !== 4326 && targetWkid !== 4269) {
                 try {
                     const asGeometry = (g: any): any => {
                         if (!g) return null;
                         if (typeof g.clone === 'function') return g; // already a Geometry instance
-                        const sr = g.spatialReference ?? { wkid: 4326 };
+                        const sr = g.spatialReference ?? { wkid: 4269 };
                         switch (g.type) {
                             case 'point': return new Point({ x: g.x ?? g.longitude, y: g.y ?? g.latitude, spatialReference: sr });
                             case 'polyline': return new Polyline({ paths: g.paths, spatialReference: sr });
@@ -1858,10 +1879,11 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     const wkt: string | undefined = (targetSR as any)?.wkt || (targetSR as any)?.wkt2;
                     let transform: any;
                     try {
-                        transform = proj4('EPSG:4326', `EPSG:${targetWkid}`);
+                        const targetProj = targetWkid === 32187 ? 'EPSG:32187' : `EPSG:${targetWkid}`;
+                        transform = proj4('EPSG:4269', targetProj);
                     } catch (epsgError) {
                         if (!wkt) throw epsgError;
-                        transform = proj4('EPSG:4326', wkt);
+                        transform = proj4('EPSG:4269', wkt);
                     }
                     const projectCoord = (lon: number, lat: number) => {
                         const [x, y] = transform.forward([lon, lat]);
@@ -11126,7 +11148,7 @@ ${lineStrings}
                     return new Point({
                         x: points[0][0],
                         y: points[0][1],
-                        spatialReference: { wkid: 4326 }
+                        spatialReference: { wkid: 4269 }
                     });
                 }
             }
@@ -11141,7 +11163,7 @@ ${lineStrings}
                 if (points && points.length >= 2) {
                     return new Polyline({
                         paths: [points],
-                        spatialReference: { wkid: 4326 }
+                        spatialReference: { wkid: 4269 }
                     });
                 }
             }
@@ -11158,7 +11180,7 @@ ${lineStrings}
                 if (points && points.length >= 3) {
                     return new Polygon({
                         rings: [points],
-                        spatialReference: { wkid: 4326 }
+                        spatialReference: { wkid: 4269 }
                     });
                 }
             }
@@ -11409,25 +11431,39 @@ ${lineStrings}
                 const name = placemark.querySelector('name')?.textContent || __t("importedFeatureValue", { value: importedCount + 1 });
                 const description = this.extractKMLDescription(placemark);
 
-                // Parse geometry (in WGS84 EPSG:4326 lat/long)
+                // Parse geometry (in EPSG:4269 / NAD83 Lat/Long)
                 const rawGeometry = await this.parseKMLGeometry(placemark);
 
                 if (rawGeometry) {
                     let geometry = rawGeometry;
 
-                    // Project geometry from WGS84 (EPSG:4326) to the map spatial reference (e.g. EPSG:2949, EPSG:3857, etc.)
-                    if (mapSR && mapWkid && mapWkid !== 4326) {
+                    // Project geometry from EPSG:4269 (NAD83 Lat/Long) to map spatial reference (EPSG:2949 / EPSG:32187)
+                    if (mapSR && mapWkid && mapWkid !== 4269 && mapWkid !== 4617) {
                         try {
-                            if (mapWkid === 3857 || mapWkid === 102100) {
-                                geometry = webMercatorUtils.geographicToWebMercator(rawGeometry) || rawGeometry;
-                            } else if (mapWkid === 4269 || mapWkid === 4617) {
+                            if (mapWkid === 2949 || mapWkid === 32187) {
+                                const targetProj = mapWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                                const transform = proj4('EPSG:4269', targetProj);
                                 if (rawGeometry.type === 'point') {
-                                    geometry = new Point({ x: rawGeometry.x, y: rawGeometry.y, spatialReference: mapSR });
-                                } else if (rawGeometry.type === 'polyline') {
-                                    geometry = new Polyline({ paths: rawGeometry.paths, spatialReference: mapSR });
-                                } else if (rawGeometry.type === 'polygon') {
-                                    geometry = new Polygon({ rings: rawGeometry.rings, spatialReference: mapSR });
+                                    const lon = rawGeometry.longitude ?? rawGeometry.x;
+                                    const lat = rawGeometry.latitude ?? rawGeometry.y;
+                                    const [x, y] = transform.forward([lon, lat]);
+                                    geometry = new Point({ x, y, spatialReference: mapSR });
+                                } else if (rawGeometry.type === 'polyline' && Array.isArray(rawGeometry.paths)) {
+                                    const paths = rawGeometry.paths.map((path: any[]) =>
+                                        path.map((coord: any[]) => transform.forward([coord[0], coord[1]]))
+                                    );
+                                    geometry = new Polyline({ paths, spatialReference: mapSR });
+                                } else if (rawGeometry.type === 'polygon' && Array.isArray(rawGeometry.rings)) {
+                                    const rings = rawGeometry.rings.map((ring: any[]) =>
+                                        ring.map((coord: any[]) => transform.forward([coord[0], coord[1]]))
+                                    );
+                                    geometry = new Polygon({ rings, spatialReference: mapSR });
+                                } else {
+                                    const projected = await this.projectGeometryFromWGS84(rawGeometry, mapSR);
+                                    geometry = projected || this.sanitizeAndProjectGeometry(rawGeometry);
                                 }
+                            } else if (mapWkid === 3857 || mapWkid === 102100) {
+                                geometry = webMercatorUtils.geographicToWebMercator(rawGeometry) || rawGeometry;
                             } else {
                                 const projected = await this.projectGeometryFromWGS84(rawGeometry, mapSR);
                                 if (projected) {
@@ -11949,36 +11985,41 @@ ${lineStrings}
 
     // New method to detect spatial reference from CRS or PRJ
     detectSpatialReference = async (crs: any): Promise<any> => {
-        // Default to WGS84 if no CRS provided
+        // Default to EPSG:4269 (NAD83 Lat/Long) if no CRS provided
         if (!crs || !crs.properties) {
-            //console.log('📍 No CRS found, defaulting to WGS84 (4326)');
-            return { wkid: 4326 };
+            return { wkid: 4269 };
         }
 
         const crsName = crs.properties.name;
-        //console.log('🔍 Parsing CRS:', crsName);
 
         if (!crsName || typeof crsName !== 'string') {
-            //console.log('📍 Invalid CRS format, defaulting to WGS84 (4326)');
-            return { wkid: 4326 };
+            return { wkid: 4269 };
         }
 
         // Try multiple patterns to extract WKID/EPSG code
 
-        // Pattern 1: Direct EPSG code (e.g., "EPSG:4326", "EPSG 4326")
+        // Pattern 1: Direct EPSG code (e.g., "EPSG:4269", "EPSG:2949", "EPSG:32187")
         const epsgMatch = crsName.match(/EPSG[:\s]+(\d+)/i);
         if (epsgMatch && epsgMatch[1]) {
             const wkid = parseInt(epsgMatch[1]);
-            //console.log('✅ Found EPSG code:', wkid);
             return { wkid: wkid };
         }
 
-        // Pattern 2: URN format (e.g., "urn:ogc:def:crs:EPSG::4326")
+        // Pattern 2: URN format (e.g., "urn:ogc:def:crs:EPSG::4269")
         const urnMatch = crsName.match(/urn:ogc:def:crs:EPSG:.*:(\d+)/i);
         if (urnMatch && urnMatch[1]) {
             const wkid = parseInt(urnMatch[1]);
-            //console.log('✅ Found EPSG from URN:', wkid);
             return { wkid: wkid };
+        }
+
+        // Pattern 2b: Quebec MTM Zone 7 (Rivière-du-Loup)
+        if (crsName.match(/MTM[_\s]+(?:Zone[_\s]+)?7/i)) {
+            return { wkid: 2949 };
+        }
+
+        // Pattern 2c: NAD83 geographic
+        if (crsName.match(/NAD[_\s]*83/i) && !crsName.match(/UTM|MTM|State/i)) {
+            return { wkid: 4269 };
         }
 
         // Pattern 3: UTM Zones (WGS84)
@@ -11990,7 +12031,6 @@ ${lineStrings}
 
             // WGS84 UTM: 326XX for North, 327XX for South
             const wkid = hemisphere === 'N' ? 32600 + zone : 32700 + zone;
-            //console.log(`✅ Detected UTM Zone ${zone}${hemisphere}, WKID:`, wkid);
             return { wkid: wkid };
         }
 
@@ -12002,50 +12042,31 @@ ${lineStrings}
 
             // NAD83 UTM: 269XX for North
             const wkid = hemisphere === 'N' ? 26900 + zone : 26900 + zone;
-            //console.log(`✅ Detected NAD83 UTM Zone ${zone}${hemisphere}, WKID:`, wkid);
             return { wkid: wkid };
         }
 
         // Pattern 5: State Plane systems
         const statePlaneMatch = crsName.match(/State[_\s]+Plane/i);
         if (statePlaneMatch) {
-            // Try to extract zone number
             const spZoneMatch = crsName.match(/(\d{4,5})/);
             if (spZoneMatch) {
                 const wkid = parseInt(spZoneMatch[1]);
-                //console.log('✅ Detected State Plane, WKID:', wkid);
                 return { wkid: wkid };
             }
         }
 
         // Pattern 6: Web Mercator variations
         if (crsName.match(/Web[_\s]+Mercator|WGS[_\s]*84[_\s]+Pseudo.*Mercator|Popular.*Visualization.*CRS/i)) {
-            //console.log('✅ Detected Web Mercator (3857)');
             return { wkid: 3857 };
         }
 
-        // Pattern 7: WGS84 variations
+        // Pattern 7: WGS84 variations -> Map to EPSG:4269 as requested (no WGS84)
         if (crsName.match(/WGS[_\s]*84|World[_\s]+Geodetic[_\s]+System/i) && !crsName.match(/UTM|Mercator/i)) {
-            //console.log('✅ Detected WGS84 (4326)');
-            return { wkid: 4326 };
+            return { wkid: 4269 };
         }
 
         // Pattern 8: Try to use WKT parser for complex definitions
         if (crsName.includes('PROJCS') || crsName.includes('GEOGCS')) {
-            //console.log('🔍 Attempting to parse WKT definition...');
-
-            // When the input is a full WKT string, ALWAYS return { wkt: theWkt }
-            // so that the geometry is created with the exact projection parameters.
-            // This is critical for ESRI-specific CRS variants (e.g., ESRI Krovak
-            // with X_Scale/Y_Scale/XY_Plane_Rotation) that differ from the standard
-            // EPSG definition despite sharing the same WKID.
-            //
-            // If we resolved to just { wkid: 5514 }, the ArcGIS PE would use its
-            // default EPSG:5514 definition which may not match the exact parameters
-            // used when the data was created.
-
-            // Try to extract a WKID for the needsProjection check, but always
-            // include the WKT so the PE gets the exact parameters.
             let extractedWkid: number | null = null;
 
             const authorityMatches = [...crsName.matchAll(/AUTHORITY\["EPSG","(\d+)"\]/gi)];
@@ -12071,9 +12092,9 @@ ${lineStrings}
             return { wkt: crsName };
         }
 
-        // If all parsing attempts fail, default to WGS84
-        console.warn('⚠️ Could not parse CRS, defaulting to WGS84 (4326)');
-        return { wkid: 4326 };
+        // If all parsing attempts fail, default to EPSG:4269
+        console.warn('⚠️ Could not parse CRS, defaulting to EPSG:4269 (NAD83 Lat/Long)');
+        return { wkid: 4269 };
     };
 
     /**
@@ -12127,9 +12148,13 @@ ${lineStrings}
     // Update convertGeoJSONGeometry to handle projection more robustly
     convertGeoJSONGeometry = async (geojsonGeom: any, sourceSR?: any): Promise<any> => {
         try {
-            //console.log('🔄 Converting geometry type:', geojsonGeom.type);
+            // First attempt: use convertGeoJSONGeometryToArcGIS for strict coordinate checking & direct projection
+            const directGeometry = await this.convertGeoJSONGeometryToArcGIS(geojsonGeom, sourceSR);
+            if (directGeometry) {
+                return directGeometry;
+            }
 
-            // Point, Polyline, Polygon are statically imported at top of file
+            // Fallback: Point, Polyline, Polygon are statically imported at top of file
             let geometry = null;
 
             // Create a proper SpatialReference instance.
@@ -12146,7 +12171,7 @@ ${lineStrings}
             } else if (sourceSR?.wkid) {
                 spatialReference = new SpatialReference({ wkid: sourceSR.wkid });
             } else {
-                spatialReference = new SpatialReference({ wkid: 4326 });
+                spatialReference = new SpatialReference({ wkid: 4269 });
             }
 
             switch (geojsonGeom.type) {
@@ -13140,9 +13165,10 @@ ${lineStrings}
                 }
             }
 
-            // Case 2: Coordinates are in Web Mercator meters and map target is EPSG:2949
+            // Case 2: Coordinates are in Web Mercator meters and map target is EPSG:2949 / EPSG:32187
             if (isWebMercator && (targetWkid === 2949 || targetWkid === 32187)) {
-                const transform = proj4('EPSG:3857', 'EPSG:2949');
+                const targetProj = targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                const transform = proj4('EPSG:3857', targetProj);
                 const projectCoord = (c: number[]) => {
                     const p = transform.forward([c[0], c[1]]);
                     return c.length > 2 ? [p[0], p[1], c[2]] : p;
@@ -13165,9 +13191,10 @@ ${lineStrings}
                 }
             }
 
-            // Case 3: Coordinates are in Geographic degrees (WGS84 / NAD83) and map target is EPSG:2949
+            // Case 3: Coordinates are in Geographic degrees (EPSG:4269 NAD83 / EPSG:4617 / EPSG:4326) and map target is EPSG:2949 / EPSG:32187
             if (isDegrees && (targetWkid === 2949 || targetWkid === 32187)) {
-                const transform = proj4('EPSG:4326', 'EPSG:2949');
+                const targetProj = targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                const transform = proj4('EPSG:4269', targetProj);
                 const projectCoord = (c: number[]) => {
                     const p = transform.forward([c[0], c[1]]);
                     return c.length > 2 ? [p[0], p[1], c[2]] : p;
@@ -13215,6 +13242,49 @@ ${lineStrings}
                 }
             }
 
+            // Case 5: Target is Geographic degrees (EPSG:4269 / 4617)
+            if (targetWkid === 4269 || targetWkid === 4617 || targetWkid === 4326) {
+                if (isDegrees) {
+                    switch (geoJsonGeometry.type) {
+                        case 'Point':
+                            return new Point({ x: geoJsonGeometry.coordinates[0], y: geoJsonGeometry.coordinates[1], spatialReference: currentSR });
+                        case 'LineString':
+                            return new Polyline({ paths: [geoJsonGeometry.coordinates], spatialReference: currentSR });
+                        case 'MultiLineString':
+                            return new Polyline({ paths: geoJsonGeometry.coordinates, spatialReference: currentSR });
+                        case 'Polygon':
+                            return new Polygon({ rings: geoJsonGeometry.coordinates, spatialReference: currentSR });
+                        case 'MultiPolygon':
+                            return new Polygon({ rings: geoJsonGeometry.coordinates.flat(1), spatialReference: currentSR });
+                        default:
+                            return null;
+                    }
+                }
+                if (isMTM2949) {
+                    const transform = proj4('EPSG:2949', 'EPSG:4269');
+                    const projectCoord = (c: number[]) => {
+                        const p = transform.forward([c[0], c[1]]);
+                        return c.length > 2 ? [p[0], p[1], c[2]] : p;
+                    };
+                    switch (geoJsonGeometry.type) {
+                        case 'Point': {
+                            const p = transform.forward(geoJsonGeometry.coordinates);
+                            return new Point({ x: p[0], y: p[1], spatialReference: currentSR });
+                        }
+                        case 'LineString':
+                            return new Polyline({ paths: [geoJsonGeometry.coordinates.map(projectCoord)], spatialReference: currentSR });
+                        case 'MultiLineString':
+                            return new Polyline({ paths: geoJsonGeometry.coordinates.map((part: any[]) => part.map(projectCoord)), spatialReference: currentSR });
+                        case 'Polygon':
+                            return new Polygon({ rings: geoJsonGeometry.coordinates.map((ring: any[]) => ring.map(projectCoord)), spatialReference: currentSR });
+                        case 'MultiPolygon':
+                            return new Polygon({ rings: geoJsonGeometry.coordinates.flat(1).map((ring: any[]) => ring.map(projectCoord)), spatialReference: currentSR });
+                        default:
+                            return null;
+                    }
+                }
+            }
+
             // General Fallback: create geometry and sanitize/project
             let geomInstance: any;
             switch (geoJsonGeometry.type) {
@@ -13244,21 +13314,22 @@ ${lineStrings}
         }
     };
 
-    // Helper method to convert from WGS84 back to map projection
+    // Helper method to convert from geographic degrees (EPSG:4269 NAD83) back to map projection
     private convertFromWGS84ToMapProjection = (lon: number, lat: number): { x: number; y: number } => {
         const mapSR = this.props.jimuMapView?.view?.spatialReference;
 
-        if (!mapSR || mapSR.wkid === 4326) {
+        if (!mapSR || mapSR.wkid === 4269 || mapSR.wkid === 4617 || mapSR.wkid === 4326) {
             return { x: lon, y: lat };
         }
 
         const mapWkid = mapSR.wkid || (mapSR as any)?.latestWkid;
-        if (mapWkid === 2949) {
+        if (mapWkid === 2949 || mapWkid === 32187) {
             try {
-                const [x, y] = proj4('EPSG:4326', 'EPSG:2949').forward([lon, lat]);
+                const targetProj = mapWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                const [x, y] = proj4('EPSG:4269', targetProj).forward([lon, lat]);
                 return { x, y };
             } catch (e) {
-                console.warn('proj4 EPSG:4326 -> EPSG:2949 failed:', e);
+                console.warn(`proj4 EPSG:4269 -> ${targetProj} failed:`, e);
             }
         }
 
@@ -13470,6 +13541,9 @@ ${lineStrings}
                 try {
                     // Convert JSON to Graphic using ArcGIS API
                     const graphic = GraphicCompat.fromJSON(item) as ExtendedGraphic;
+                    if (graphic.geometry) {
+                        graphic.geometry = this.sanitizeAndProjectGeometry(graphic.geometry);
+                    }
 
                     if (!graphic.attributes) {
                         graphic.attributes = {};
@@ -13526,6 +13600,9 @@ ${lineStrings}
             measurementLabelsData.forEach((item, index) => {
                 try {
                     const labelGraphic = GraphicCompat.fromJSON(item) as ExtendedGraphic;
+                    if (labelGraphic.geometry) {
+                        labelGraphic.geometry = this.sanitizeAndProjectGeometry(labelGraphic.geometry);
+                    }
 
                     if (!labelGraphic.attributes) {
                         labelGraphic.attributes = {};
