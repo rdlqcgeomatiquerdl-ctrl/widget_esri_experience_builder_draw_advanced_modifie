@@ -47,6 +47,8 @@ if (proj4 && typeof proj4.defs === 'function') {
 import shpwrite from '@mapbox/shp-write';
 const JSZipModule: any = require('jszip');
 const JSZip: any = JSZipModule.default || JSZipModule;
+const shpModule: any = require('shpjs');
+const shp: any = shpModule.default || shpModule;
 type GeoJsonProperties = { [name: string]: any } | null;
 type Geometry = { type: string;[name: string]: any };
 type FeatureCollection<G = Geometry, P = GeoJsonProperties> = {
@@ -1273,8 +1275,16 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
         if (!geometry) return null;
         try {
             const mapSR = this.props.jimuMapView?.view?.spatialReference;
-            const targetWkid = mapSR?.wkid || (mapSR as any)?.latestWkid || 2949;
+            const targetWkid = mapSR?.wkid || (mapSR as any)?.latestWkid;
+            if (!targetWkid) {
+                // If map spatial reference is not yet known, do not mutate coordinates or assume 2949
+                return geometry;
+            }
             const geomWkid = geometry.spatialReference?.wkid || (geometry.spatialReference as any)?.latestWkid;
+            if (geomWkid && geomWkid === targetWkid) {
+                // Geometry is already in target spatial reference
+                return geometry;
+            }
 
             const fixCoord = (coordX: number, coordY: number): [number, number] => {
                 if (typeof coordX !== 'number' || typeof coordY !== 'number' || isNaN(coordX) || isNaN(coordY)) {
@@ -3658,13 +3668,21 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
             this._isImporting = true;
 
             // Call existing importKML logic
-            const importedCount = await this.importKML(content);
+            const result = await this.importKML(content);
+            const importedCount = typeof result === 'number' ? result : (result?.count || 0);
+            const importedGraphics = typeof result === 'object' && result?.graphics ? result.graphics : [];
 
             // Refresh drawings list to show imported items immediately
             await this.refreshDrawingsFromLayer();
 
-            if (importedCount && importedCount > 0) {
+            if (importedGraphics.length > 0) {
+                this.zoomToImportedFeatures(importedGraphics);
+            } else if (importedCount && importedCount > 0) {
                 this.zoomToImportedFeatures(importedCount);
+            }
+
+            if ((this.props.allowLocalStorage !== false) && this.state.consentGranted === true) {
+                this.debouncedSave();
             }
 
             // Close dialog and reset
@@ -8280,8 +8298,15 @@ ${lineStrings}
                 const typeB = (b.attributes?.geometryType || b.geometry?.type || '').toLowerCase();
                 return typeA.localeCompare(typeB);
             } else if (sortOption === 'created') {
-                const createdA = a.attributes?.createdDate ? Number(a.attributes.createdDate) : 0;
-                const createdB = b.attributes?.createdDate ? Number(b.attributes.createdDate) : 0;
+                const parseTime = (val: any) => {
+                    if (!val) return 0;
+                    const num = Number(val);
+                    if (!isNaN(num) && num > 0) return num;
+                    const time = new Date(val).getTime();
+                    return isNaN(time) ? 0 : time;
+                };
+                const createdA = parseTime(a.attributes?.createdDate);
+                const createdB = parseTime(b.attributes?.createdDate);
                 return createdB - createdA; // Newest first
             }
             return 0;
@@ -11184,9 +11209,7 @@ ${lineStrings}
 
             //console.log('🔄 Parsing shapefile to GeoJSON...');
 
-            // Dynamic import of shpjs to avoid bundling issues
-            const shpModule: any = await import('shpjs');
-            const shp: any = shpModule.default || shpModule;
+            // shp is statically imported at top of file to avoid dynamic chunks
 
             // Parse the shapefile
             let geoJSON: any;
@@ -11340,7 +11363,7 @@ ${lineStrings}
 
 
     // Add the importKML method with symbology support
-    importKML = async (kmlText: string): Promise<number> => {
+    importKML = async (kmlText: string): Promise<{ count: number; graphics: Graphic[] }> => {
         try {
             // Parse KML using browser's DOMParser
             const parser = new DOMParser();
@@ -11355,6 +11378,7 @@ ${lineStrings}
             // Extract placemarks
             const placemarks = kmlDoc.querySelectorAll('Placemark');
             let importedCount = 0;
+            const createdGraphics: Graphic[] = [];
 
             const mapSR = this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference;
             const mapWkid = mapSR ? (mapSR.wkid || (mapSR as any)?.latestWkid) : null;
@@ -11457,11 +11481,12 @@ ${lineStrings}
                     if (targetLayer) {
                         (targetLayer as any).add(graphic);
                     }
+                    createdGraphics.push(graphic);
                     importedCount++;
                 }
             }
 
-            return importedCount;
+            return { count: importedCount, graphics: createdGraphics };
         } catch (error) {
             console.error('KML import error:', error);
             throw new Error('Failed to import KML file.');
@@ -12256,16 +12281,21 @@ ${lineStrings}
     };
 
     // Helper method to zoom to imported features
-    zoomToImportedFeatures = async (importedCount: number) => {
+    zoomToImportedFeatures = async (featuresOrCount: Graphic[] | number) => {
         if (!this.props.jimuMapView?.view) {
             return;
         }
 
         setTimeout(async () => {
             try {
-                const targetLayer = this.props.graphicsLayer || this.sketchViewModel?.layer;
-                const allGraphics = (targetLayer as any)?.graphics?.toArray() || [];
-                const importedGraphics = allGraphics.slice(-importedCount);
+                let importedGraphics: Graphic[] = [];
+                if (Array.isArray(featuresOrCount)) {
+                    importedGraphics = featuresOrCount.filter(g => g && g.geometry);
+                } else if (typeof featuresOrCount === 'number') {
+                    const targetLayer = this.props.graphicsLayer || this.sketchViewModel?.layer;
+                    const allGraphics = (targetLayer as any)?.graphics?.toArray() || [];
+                    importedGraphics = allGraphics.slice(-featuresOrCount);
+                }
 
                 if (importedGraphics.length > 0) {
                     const geometries = importedGraphics.map((g: any) => g.geometry).filter((g: any) => g != null);
@@ -12331,8 +12361,6 @@ ${lineStrings}
 
             // Step 2: Parse the shapefile with shpjs using the PRJ-stripped ZIP.
             // Without a .prj file, shpjs returns raw coordinates as-is.
-            const shpModule: any = await import('shpjs');
-            const shp: any = shpModule.default || shpModule;
             let geoJSON = await shp(parseBuffer);
 
             // Normalize to single FeatureCollection

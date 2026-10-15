@@ -52,7 +52,9 @@ import Multipoint from 'esri/geometry/Multipoint';
 import Point from 'esri/geometry/Point';
 import Circle from 'esri/geometry/Circle';
 import * as geometryEngine from 'esri/geometry/geometryEngine';
-console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.3) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
+import * as geometryJsonUtils from 'esri/geometry/support/jsonUtils';
+import * as symbolJsonUtils from 'esri/symbols/support/jsonUtils';
+console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.4) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
 import {
 	densifyOperator,
 	lengthOperator,
@@ -3550,99 +3552,68 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 				// Clear the pending flag
 				(window as any).__pendingDrawGeometry = null;
 
-				// Import required modules. Note: esri/geometry/support/jsonUtils and
-				// esri/symbols/support/jsonUtils export `fromJSON` as a NAMED export,
-				// not a default. The previous code destructured `{ default: jsonUtils }`
-				// and then called `jsonUtils.fromJSON(...)`, which silently threw because
-				// `default` was undefined — the surrounding try/catch swallowed it. This
-				// path only worked when the geometry already had a `.type` (so the ternary
-				// took the truthy branch and skipped fromJSON); raw JSON would fail.
-				import('esri/Graphic').then(({ default: Graphic }) => {
-					import('esri/geometry/support/jsonUtils').then((jsonUtils: any) => {
-						const geomFromJSON = jsonUtils.fromJSON || jsonUtils.default?.fromJSON;
-						// Reconstruct geometry from JSON
-						const geometry = graphicData.geometry.type
-							? graphicData.geometry
-							: (geomFromJSON ? geomFromJSON(graphicData.geometry) : graphicData.geometry);
+				// Geometry and symbol utils are imported statically at top of file
+				try {
+					const geomFromJSON = (geometryJsonUtils as any).fromJSON || (geometryJsonUtils as any).default?.fromJSON;
+					// Reconstruct geometry from JSON
+					const geometry = graphicData.geometry.type
+						? graphicData.geometry
+						: (geomFromJSON ? geomFromJSON(graphicData.geometry) : graphicData.geometry);
 
-						// Build and add the graphic. Runs whether or not Identify sent a symbol; the old
-						// code only created the graphic inside the `if (graphicData.symbol)` branch, so
-						// a feature copied without a symbol was silently dropped.
-						const addGraphicWithSymbol = (symbol: any) => {
-									if (!symbol) {
-										symbol = this.getDefaultSymbol(geometry.type);
-									}
-									// Create the graphic
-									const newGraphic = new Graphic({
-										geometry: geometry,
-										symbol: symbol,
-										attributes: {
-											uniqueId: `g_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-											name: graphicData.attributes?.name || 'From Identify',
-											copiedFrom: graphicData.attributes?.copiedFrom || 'Identify',
-											sourceLayer: graphicData.attributes?.sourceLayer,
-											createdDate: Date.now(),
-											isDrawing: true,
-											hideFromList: false,
-											drawMode: geometry.type,
-											fromIdentifyWidget: true
-										}
-									});
-
-									// Add to drawings layer
-									if (this.drawLayer) {
-										this.drawLayer.add(newGraphic);
-
-										// Save to storage. Previously this called
-										// this.saveDrawingsToStorage() which doesn't
-										// exist — silently skipped saving every Identify
-										// copy. Dispatch the documented event instead,
-										// which handleSaveEvent listens for and routes
-										// to saveDrawingsToLocalStorage.
-										try {
-											window.dispatchEvent(new CustomEvent('saveDrawingsToStorage'));
-										} catch (e) {
-											console.warn('[Draw] Could not dispatch save event:', e);
-										}
-
-										// The panel listens to the draw layer's graphics
-										// collection directly, so adding the new graphic
-										// above already triggers its re-render. A previous
-										// setState({ drawingsUpdated: Date.now() }) here
-										// was dead code — `drawingsUpdated` isn't in
-										// States so TypeScript dropped it.
-
-										// Show success toast
-										this.showCopyPasteToast(
-											`Added "${graphicData.attributes?.name || 'feature'}" from Identify`,
-											'success'
-										);
-
-										this.announceToScreenReader(`Feature geometry added to My Drawings from Identify widget.`);
-									}
-						};
-
-						if (graphicData.symbol) {
-							import('esri/symbols/support/jsonUtils').then((symbolJsonUtils: any) => {
-								const symFromJSON = symbolJsonUtils.fromJSON || symbolJsonUtils.default?.fromJSON;
-								let symbol: any = null;
-								try { symbol = symFromJSON ? symFromJSON(graphicData.symbol) : null; } catch (e) { symbol = null; }
-								addGraphicWithSymbol(symbol);
-							}).catch(() => {
-								// Symbol module failed to load: fall back to the default symbol
-								addGraphicWithSymbol(null);
-							});
-						} else {
-							addGraphicWithSymbol(null);
+					// Build and add the graphic
+					const addGraphicWithSymbol = (symbol: any) => {
+						if (!symbol) {
+							symbol = this.getDefaultSymbol(geometry.type);
 						}
-					}).catch(error => {
-						console.error('[Draw] Error loading geometry utils:', error);
-						this.showCopyPasteToast('Failed to process geometry from Identify', 'error');
-					});
-				}).catch(error => {
-					console.error('[Draw] Error loading Graphic module:', error);
-					this.showCopyPasteToast('Failed to add geometry from Identify', 'error');
-				});
+						// Create the graphic
+						const newGraphic = new Graphic({
+							geometry: geometry,
+							symbol: symbol,
+							attributes: {
+								uniqueId: `g_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+								name: graphicData.attributes?.name || 'From Identify',
+								copiedFrom: graphicData.attributes?.copiedFrom || 'Identify',
+								sourceLayer: graphicData.attributes?.sourceLayer,
+								createdDate: Date.now(),
+								isDrawing: true,
+								hideFromList: false,
+								drawMode: geometry.type,
+								fromIdentifyWidget: true
+							}
+						});
+
+						// Add to drawings layer
+						if (this.drawLayer) {
+							this.drawLayer.add(newGraphic);
+
+							try {
+								window.dispatchEvent(new CustomEvent('saveDrawingsToStorage'));
+							} catch (e) {
+								console.warn('[Draw] Could not dispatch save event:', e);
+							}
+
+							// Show success toast
+							this.showCopyPasteToast(
+								`Added "${graphicData.attributes?.name || 'feature'}" from Identify`,
+								'success'
+							);
+
+							this.announceToScreenReader(`Feature geometry added to My Drawings from Identify widget.`);
+						}
+					};
+
+					if (graphicData.symbol) {
+						const symFromJSON = (symbolJsonUtils as any).fromJSON || (symbolJsonUtils as any).default?.fromJSON;
+						let symbol: any = null;
+						try { symbol = symFromJSON ? symFromJSON(graphicData.symbol) : null; } catch (e) { symbol = null; }
+						addGraphicWithSymbol(symbol);
+					} else {
+						addGraphicWithSymbol(null);
+					}
+				} catch (innerError) {
+					console.error('[Draw] Error processing geometry from Identify:', innerError);
+					this.showCopyPasteToast('Failed to process geometry from Identify', 'error');
+				}
 			} catch (error) {
 				console.error('[Draw] Error processing geometry from Identify:', error);
 				this.showCopyPasteToast('Failed to add geometry from Identify', 'error');
