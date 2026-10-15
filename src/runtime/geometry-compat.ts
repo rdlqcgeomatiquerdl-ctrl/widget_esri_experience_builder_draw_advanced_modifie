@@ -10,6 +10,10 @@ if (proj4 && typeof proj4.defs === 'function') {
     proj4.defs('EPSG:2949', '+proj=tmerc +lat_0=0 +lon_0=-70.5 +k=0.9999 +x_0=304800 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs');
     proj4.defs('urn:ogc:def:crs:EPSG::2949', proj4.defs('EPSG:2949'));
   }
+  if (!proj4.defs['EPSG:32187']) {
+    proj4.defs('EPSG:32187', '+proj=tmerc +lat_0=0 +lon_0=-70.5 +k=0.9999 +x_0=304800 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs');
+    proj4.defs('urn:ogc:def:crs:EPSG::32187', proj4.defs('EPSG:32187'));
+  }
   if (!proj4.defs['EPSG:4269']) {
     proj4.defs('EPSG:4269', '+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs +type=crs');
     proj4.defs('urn:ogc:def:crs:EPSG::4269', proj4.defs('EPSG:4269'));
@@ -120,19 +124,39 @@ export const projectOperator = {
       }
     } catch { }
     try {
-      if (typeof geom.x === 'number' && typeof geom.y === 'number' && proj4) {
+      if (proj4) {
         const fromWkid = geom.spatialReference?.wkid || (geom.spatialReference?.isWGS84 ? 4326 : 4326);
-        const toWkid = targetSR?.wkid || (targetSR?.isWGS84 ? 4326 : 4326);
-        if (fromWkid === toWkid) return geom;
-        const [px, py] = proj4(`EPSG:${fromWkid}`, `EPSG:${toWkid}`, [geom.x, geom.y]);
-        const clone = typeof geom.clone === 'function' ? geom.clone() : { ...geom };
-        clone.x = px;
-        clone.y = py;
-        clone.spatialReference = targetSR;
-        return clone;
+        const toWkid = targetSR?.wkid || (targetSR?.latestWkid) || (targetSR?.isWGS84 ? 4326 : 4326);
+        if (fromWkid && toWkid && fromWkid !== toWkid) {
+          const transform = proj4(`EPSG:${fromWkid}`, `EPSG:${toWkid}`);
+          if (typeof geom.x === 'number' && typeof geom.y === 'number') {
+            const [px, py] = transform.forward([geom.x, geom.y]);
+            const clone = typeof geom.clone === 'function' ? geom.clone() : { ...geom };
+            clone.x = px;
+            clone.y = py;
+            clone.spatialReference = targetSR;
+            return clone;
+          } else if (Array.isArray(geom.rings)) {
+            const newRings = geom.rings.map((ring: any[]) =>
+              ring.map((c: any[]) => transform.forward([c[0], c[1]]))
+            );
+            const clone = typeof geom.clone === 'function' ? geom.clone() : { ...geom };
+            clone.rings = newRings;
+            clone.spatialReference = targetSR;
+            return clone;
+          } else if (Array.isArray(geom.paths)) {
+            const newPaths = geom.paths.map((path: any[]) =>
+              path.map((c: any[]) => transform.forward([c[0], c[1]]))
+            );
+            const clone = typeof geom.clone === 'function' ? geom.clone() : { ...geom };
+            clone.paths = newPaths;
+            clone.spatialReference = targetSR;
+            return clone;
+          }
+        }
       }
     } catch { }
-    return geom;
+    return null;
   },
   executeMany: (geoms: any[], targetSR: any): any[] => {
     return (geoms || []).map((g) => projectOperator.execute(g, targetSR));

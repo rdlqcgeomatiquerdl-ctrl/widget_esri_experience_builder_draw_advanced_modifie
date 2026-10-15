@@ -1274,15 +1274,9 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
     public sanitizeAndProjectGeometry = (geometry: any): any => {
         if (!geometry) return null;
         try {
-            const mapSR = this.props.jimuMapView?.view?.spatialReference;
-            const targetWkid = mapSR?.wkid || (mapSR as any)?.latestWkid;
+            const mapSR = this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference;
+            const targetWkid = mapSR?.wkid || (mapSR as any)?.latestWkid || 2949;
             if (!targetWkid) {
-                // If map spatial reference is not yet known, do not mutate coordinates or assume 2949
-                return geometry;
-            }
-            const geomWkid = geometry.spatialReference?.wkid || (geometry.spatialReference as any)?.latestWkid;
-            if (geomWkid && geomWkid === targetWkid) {
-                // Geometry is already in target spatial reference
                 return geometry;
             }
 
@@ -1309,7 +1303,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     }
 
                     // Geographic degrees (WGS84 / NAD83: lon -180..180, lat -90..90)
-                    if (geomWkid === 4326 || geomWkid === 4269 || geomWkid === 4617 || (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90)) {
+                    if (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90) {
                         try {
                             const pt = proj4('EPSG:4326', 'EPSG:2949').forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
@@ -1321,7 +1315,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     }
 
                     // Web Mercator meters
-                    if (geomWkid === 3857 || geomWkid === 102100 || Math.abs(coordX) > 1000000 || Math.abs(coordY) > 1000000) {
+                    if (Math.abs(coordX) > 1000000 || Math.abs(coordY) > 1000000) {
                         try {
                             const pt = proj4('EPSG:3857', 'EPSG:2949').forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
@@ -1788,9 +1782,42 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
     };
     private projectGeometryFromWGS84 = async (wgs84Geometry: any, targetSR: any): Promise<any | null> => {
         try {
-            const targetWkid = targetSR?.wkid || (targetSR as any)?.latestWkid;
+            const targetWkid = targetSR ? (targetSR.wkid || (targetSR as any)?.latestWkid) : 2949;
 
-            // Fast path: WGS84 → Web Mercator (synchronous, no WASM needed)
+            // Fast path 1: EPSG:2949 / EPSG:32187 (Quebec MTM Zone 7 meters - Ville de RDL)
+            if (targetWkid === 2949 || targetWkid === 32187) {
+                try {
+                    const transform = proj4('EPSG:4326', 'EPSG:2949');
+                    const targetSRObj = targetSR || new SpatialReference({ wkid: targetWkid });
+                    if (wgs84Geometry.type === 'point') {
+                        const lon = wgs84Geometry.longitude ?? wgs84Geometry.x;
+                        const lat = wgs84Geometry.latitude ?? wgs84Geometry.y;
+                        if (typeof lon === 'number' && typeof lat === 'number') {
+                            const [x, y] = transform.forward([lon, lat]);
+                            return new Point({ x, y, spatialReference: targetSRObj });
+                        }
+                    } else if (wgs84Geometry.type === 'polyline' && Array.isArray(wgs84Geometry.paths)) {
+                        const paths = wgs84Geometry.paths.map((path: any[]) =>
+                            path.map((coord: any[]) => transform.forward([coord[0], coord[1]]))
+                        );
+                        return new Polyline({ paths, spatialReference: targetSRObj });
+                    } else if (wgs84Geometry.type === 'polygon' && Array.isArray(wgs84Geometry.rings)) {
+                        const rings = wgs84Geometry.rings.map((ring: any[]) =>
+                            ring.map((coord: any[]) => transform.forward([coord[0], coord[1]]))
+                        );
+                        return new Polygon({ rings, spatialReference: targetSRObj });
+                    } else if (wgs84Geometry.type === 'multipoint' && Array.isArray(wgs84Geometry.points)) {
+                        const points = wgs84Geometry.points.map((coord: any[]) =>
+                            transform.forward([coord[0], coord[1]])
+                        );
+                        return new Multipoint({ points, spatialReference: targetSRObj });
+                    }
+                } catch (fastProjErr) {
+                    console.warn('[projectGeometryFromWGS84] fast path EPSG:2949 failed:', fastProjErr);
+                }
+            }
+
+            // Fast path 2: WGS84 → Web Mercator (synchronous, no WASM needed)
             if (targetWkid === 3857 || targetWkid === 102100) {
                 const result = webMercatorUtils.geographicToWebMercator(wgs84Geometry);
                 if (result) return result;
@@ -4041,17 +4068,12 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                 if (typeof coordX !== 'number' || typeof coordY !== 'number' || isNaN(coordX) || isNaN(coordY)) {
                     return [0, 0];
                 }
-                // Coordinates already in geographic degrees
+                // Coordinates already in geographic degrees (lon -180..180, lat -90..90)
                 if (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90) {
-                    if (geomWkid === 4326 || !geomWkid) {
-                        try {
-                            const [lon, lat] = proj4('EPSG:4326', 'EPSG:4269').forward([coordX, coordY]);
-                            return [Number(lon.toFixed(8)), Number(lat.toFixed(8))];
-                        } catch {
-                            return [Number(coordX.toFixed(8)), Number(coordY.toFixed(8))];
-                        }
-                    }
-                    if (geomWkid === 4269) {
+                    try {
+                        const [lon, lat] = proj4('EPSG:4326', 'EPSG:4269').forward([coordX, coordY]);
+                        return [Number(lon.toFixed(8)), Number(lat.toFixed(8))];
+                    } catch {
                         return [Number(coordX.toFixed(8)), Number(coordY.toFixed(8))];
                     }
                 }
@@ -11380,8 +11402,8 @@ ${lineStrings}
             let importedCount = 0;
             const createdGraphics: Graphic[] = [];
 
-            const mapSR = this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference;
-            const mapWkid = mapSR ? (mapSR.wkid || (mapSR as any)?.latestWkid) : null;
+            const mapSR = this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference || new SpatialReference({ wkid: 2949 });
+            const mapWkid = mapSR ? (mapSR.wkid || (mapSR as any)?.latestWkid || 2949) : 2949;
 
             for (const placemark of Array.from(placemarks)) {
                 const name = placemark.querySelector('name')?.textContent || __t("importedFeatureValue", { value: importedCount + 1 });
@@ -11417,6 +11439,28 @@ ${lineStrings}
                         } catch (projErr) {
                             console.warn('Error projecting KML geometry to map spatial reference, trying fallback:', projErr);
                             geometry = this.sanitizeAndProjectGeometry(rawGeometry);
+                        }
+                    }
+
+                    // Post-projection validation: ensure coordinates are in meters if map is metric
+                    if (geometry && (mapWkid === 2949 || mapWkid === 32187 || mapWkid === 3857 || mapWkid === 102100)) {
+                        let sampleX: number | undefined;
+                        let sampleY: number | undefined;
+                        if (geometry.type === 'point') {
+                            sampleX = geometry.x;
+                            sampleY = geometry.y;
+                        } else if (geometry.type === 'polygon' && geometry.rings?.[0]?.[0]) {
+                            sampleX = geometry.rings[0][0][0];
+                            sampleY = geometry.rings[0][0][1];
+                        } else if (geometry.type === 'polyline' && geometry.paths?.[0]?.[0]) {
+                            sampleX = geometry.paths[0][0][0];
+                            sampleY = geometry.paths[0][0][1];
+                        }
+                        if (typeof sampleX === 'number' && typeof sampleY === 'number') {
+                            if (Math.abs(sampleX) <= 180 && Math.abs(sampleY) <= 90) {
+                                console.warn('[importKML] Sample coordinate is still in geographic degrees! Forcing sanitizeAndProjectGeometry.');
+                                geometry = this.sanitizeAndProjectGeometry(geometry);
+                            }
                         }
                     }
 
@@ -12298,7 +12342,10 @@ ${lineStrings}
                 }
 
                 if (importedGraphics.length > 0) {
-                    const geometries = importedGraphics.map((g: any) => g.geometry).filter((g: any) => g != null);
+                    const geometries = importedGraphics.map((g: any) => {
+                        if (!g?.geometry) return null;
+                        return this.sanitizeAndProjectGeometry(g.geometry) || g.geometry;
+                    }).filter((g: any) => g != null);
 
                     if (geometries.length > 0) {
                         let extent: any = null;
@@ -13030,7 +13077,7 @@ ${lineStrings}
     // Convert GeoJSON geometry to ArcGIS geometry
     private convertGeoJSONGeometryToArcGIS = async (geoJsonGeometry: any): Promise<any | null> => {
         try {
-            const currentSR = this.props.jimuMapView?.view?.spatialReference || new SpatialReference({ wkid: 4326 });
+            const currentSR = this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference || new SpatialReference({ wkid: 2949 });
 
             // First convert the GeoJSON coordinates to a temporary WGS84 geometry
             let wgs84Geometry: any;
@@ -13076,7 +13123,7 @@ ${lineStrings}
             }
 
             // If the map is in WGS84, return the geometry as-is
-            const currentWkid = currentSR.wkid || (currentSR as any).latestWkid;
+            const currentWkid = currentSR ? (currentSR.wkid || (currentSR as any).latestWkid || 2949) : 2949;
             if (currentWkid === 4326) {
                 return wgs84Geometry;
             }
@@ -13088,7 +13135,28 @@ ${lineStrings}
             }
 
             // Project from WGS84 to the current map spatial reference
-            return await this.projectGeometryFromWGS84(wgs84Geometry, currentSR);
+            const projected = await this.projectGeometryFromWGS84(wgs84Geometry, currentSR);
+            if (projected) {
+                if (currentWkid === 2949 || currentWkid === 32187 || currentWkid === 3857 || currentWkid === 102100) {
+                    let sampleX: number | undefined;
+                    let sampleY: number | undefined;
+                    if (projected.type === 'point') {
+                        sampleX = projected.x;
+                        sampleY = projected.y;
+                    } else if (projected.type === 'polygon' && projected.rings?.[0]?.[0]) {
+                        sampleX = projected.rings[0][0][0];
+                        sampleY = projected.rings[0][0][1];
+                    } else if (projected.type === 'polyline' && projected.paths?.[0]?.[0]) {
+                        sampleX = projected.paths[0][0][0];
+                        sampleY = projected.paths[0][0][1];
+                    }
+                    if (typeof sampleX === 'number' && typeof sampleY === 'number' && Math.abs(sampleX) <= 180 && Math.abs(sampleY) <= 90) {
+                        return this.sanitizeAndProjectGeometry(projected);
+                    }
+                }
+                return projected;
+            }
+            return this.sanitizeAndProjectGeometry(wgs84Geometry);
 
         } catch (error) {
             console.error('Error converting GeoJSON geometry:', error);
