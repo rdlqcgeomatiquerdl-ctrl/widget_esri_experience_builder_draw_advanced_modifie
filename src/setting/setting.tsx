@@ -183,7 +183,9 @@ const KNOWN_CONFIG_KEYS: string[] = [
     'defaultBufferOpacity',
     'defaultBufferColor',
     'enableUndoRedo',
-    'confirmBeforeClear'
+    'confirmBeforeClear',
+    'showHelp',
+    'alwaysShowHelpHint'
 ]
 
 // Boolean toggles whose undefined value means ON (rendered with `!== false`).
@@ -1356,6 +1358,13 @@ export default class Setting extends React.PureComponent<SettingProps, SettingSt
                           checked={this.props.config?.showHelp !== false}
                           onChange={(evt) => { this.props.onSettingChange({ id: this.props.id, config: (this.props.config as any).set('showHelp', evt.target.checked) }) }}
                           aria-label={this.nls('settingShowTheQuestionMarkButtonThat')}
+                        />
+                      </SettingRow>
+                      <SettingRow tag='label' label={this.nls('settingAlwaysShowStepGuide') || 'Toujours afficher le guide pas à pas'}>
+                        <Switch
+                          checked={this.props.config?.alwaysShowHelpHint === true}
+                          onChange={(evt) => { this.props.onSettingChange({ id: this.props.id, config: (this.props.config as any).set('alwaysShowHelpHint', evt.target.checked) }) }}
+                          aria-label={this.nls('settingAlwaysShowStepGuide') || 'Toujours afficher le guide pas à pas'}
                         />
                       </SettingRow>
                     </SettingSection>

@@ -20,6 +20,8 @@ export interface Config {
   /** Show the question-mark button that opens the help guide. Undefined means on,
    *  so apps configured before this setting existed keep their help button. */
   showHelp?: boolean
+  /** Always display the step-by-step guide banner at runtime. */
+  alwaysShowHelpHint?: boolean
     creationMode: DrawMode;
     turnOffOnClose: boolean;
     changeTitle: boolean;

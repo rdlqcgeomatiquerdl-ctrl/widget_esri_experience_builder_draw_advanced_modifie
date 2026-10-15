@@ -231,6 +231,8 @@ System.register([], function (e) {
         settingHelp: "Aide",
         settingShowHelpGuide: "Afficher le guide d'aide",
         settingShowTheQuestionMarkButtonThat: "Afficher le bouton question-marque qui ouvre le guide d'aide du widget",
+        settingAlwaysShowStepGuide: "Toujours afficher le guide pas à pas",
+        settingAlwaysShowStepGuideDesc: "Conserver le bandeau du guide pas à pas visible en permanence dans l'onglet Dessiner",
         nauticalMiles: "Milles nautiques",
         yards: "Fils",
         squareKilometers: "Kilomètres carrés",

@@ -52,7 +52,7 @@ import Multipoint from 'esri/geometry/Multipoint';
 import Point from 'esri/geometry/Point';
 import Circle from 'esri/geometry/Circle';
 import * as geometryEngine from 'esri/geometry/geometryEngine';
-console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.1) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
+console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.2) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
 import {
 	densifyOperator,
 	lengthOperator,
@@ -1986,7 +1986,7 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 			selectedDrawingIndex: null, // Added BM
 			activeTab: (this.props.config.enableMyDrawings !== false && this.props.config.defaultTab === 'mydrawings') ? 'mydrawings' : 'draw', // Added BM
 			helpOpen: false,
-			showFirstRunHint: !this.readHelpHintDismissed(),
+			showFirstRunHint: (this.props.config?.alwaysShowHelpHint === true) || !this.readHelpHintDismissed(),
 			selectedGraphicIndex: null,
 			selectedGraphics: new Set<number>(),
 			arrowEnabled: false,
@@ -2023,15 +2023,28 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 	// ---------------------------------------------------------------------
 	private helpHintKey = () => `drawAdvanced.helpHintDismissed.${this.props.id}`;
 	private readHelpHintDismissed = (): boolean => {
-		try { return window.localStorage.getItem(this.helpHintKey()) === '1'; } catch { return true; }
+		if (this.props.config?.alwaysShowHelpHint === true) {
+			return false;
+		}
+		try { return window.localStorage.getItem(this.helpHintKey()) === '1'; } catch { return false; }
 	};
 	private dismissHelpHint = () => {
-		try { window.localStorage.setItem(this.helpHintKey(), '1'); } catch { /* private browsing */ }
+		if (this.props.config?.alwaysShowHelpHint !== true) {
+			try { window.localStorage.setItem(this.helpHintKey(), '1'); } catch { /* private browsing */ }
+		}
 		this.setState({ showFirstRunHint: false });
 	};
-	// Opening the guide counts as answering the hint.
-	private openHelp = () => { this.dismissHelpHint(); this.setState({ helpOpen: true }); };
+	private openHelp = () => { this.setState({ helpOpen: true }); };
 	private closeHelp = () => { this.setState({ helpOpen: false }); };
+	private toggleStepGuide = () => {
+		this.setState(prevState => {
+			const nextState = !prevState.showFirstRunHint;
+			if (nextState) {
+				try { window.localStorage.removeItem(this.helpHintKey()); } catch { }
+			}
+			return { showFirstRunHint: nextState };
+		});
+	};
 	// Flags come from the SAME `!== false` checks the UI uses, so the guide never
 	// describes a control the widget is not currently showing.
 	private helpFeatures = (): HelpFeatures => {
@@ -10690,9 +10703,30 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 					</div>
 				)}
 				{this.props.config?.showHelp !== false && (
-				    <JimuButton size="sm" type="tertiary" icon onClick={this.openHelp} title={this.nls('helpTitle')} aria-label={this.nls('helpTitle')} style={{ flexShrink: 0, marginLeft: 'auto' }}>
-    					<CalciteIcon icon="question" scale="s" />
-    				</JimuButton>
+					<div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto', paddingRight: '4px' }}>
+						<JimuButton
+							size="sm"
+							type={this.state.showFirstRunHint ? 'primary' : 'tertiary'}
+							onClick={this.toggleStepGuide}
+							title={this.state.showFirstRunHint ? (this.nls('hideStepByStepGuide') || 'Masquer le guide pas à pas') : (this.nls('showStepByStepGuide') || 'Afficher le guide pas à pas')}
+							aria-label={this.nls('stepByStepGuide') || 'Guide pas à pas'}
+							style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', padding: '2px 8px' }}
+						>
+							<CalciteIcon icon="lightbulb" scale="s" />
+							<span>{this.nls('stepByStepGuide') || 'Guide pas à pas'}</span>
+						</JimuButton>
+						<JimuButton
+							size="sm"
+							type="tertiary"
+							icon
+							onClick={this.openHelp}
+							title={this.nls('helpTitle')}
+							aria-label={this.nls('helpTitle')}
+							style={{ flexShrink: 0 }}
+						>
+							<CalciteIcon icon="question" scale="s" />
+						</JimuButton>
+					</div>
 				)}
 				</div>
 				<HelpPopup
@@ -10724,8 +10758,8 @@ export default class Widget extends React.PureComponent<WidgetProps, States> {
 					>
 						{this.props.config?.showHelp !== false && this.state.showFirstRunHint && (
 							<HelpHint
-								title={this.nls('firstRunTitle')}
-								body={this.nls('firstRunBody')}
+								title={this.nls('stepByStepGuideTitle') || this.nls('firstRunTitle')}
+								body={this.nls('stepGuideBody') || this.nls('firstRunBody')}
 								linkLabel={this.nls('firstRunHelpLink')}
 								dismissLabel={this.nls('firstRunDismiss')}
 								onOpenHelp={this.openHelp}

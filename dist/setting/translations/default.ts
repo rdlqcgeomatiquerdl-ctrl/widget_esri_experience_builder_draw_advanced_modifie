@@ -246,6 +246,8 @@ export default {
   settingHelp: 'Help',
   settingShowHelpGuide: 'Show help guide',
   settingShowTheQuestionMarkButtonThat: 'Show the question-mark button that opens the widget help guide',
+  settingAlwaysShowStepGuide: 'Always show step-by-step guide banner',
+  settingAlwaysShowStepGuideDesc: 'Keep the step-by-step guide banner visible at all times in the Draw tab',
   nauticalMiles: 'Nautical Miles',
   yards: 'Yards',
   squareKilometers: 'Square Kilometers',
