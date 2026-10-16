@@ -1,0 +1,21 @@
+# Installed dependencies (Experience Builder installs these from package.json)
+node_modules/
+
+# Visual Studio cache / user state
+.vs/
+*.user
+*.suo
+
+# Build output
+# dist/ is tracked for pre-built distribution
+build/
+
+# OS / editor cruft
+.DS_Store
+__MACOSX/
+Thumbs.db
+*.log
+
+# Cowork working folder and release zips never ship
+Claude outputs/
+*.zip

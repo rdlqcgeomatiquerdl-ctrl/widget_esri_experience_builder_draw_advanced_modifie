@@ -43,6 +43,7 @@ if (proj4 && typeof proj4.defs === 'function') {
     proj4.defs("urn:ogc:def:crs:EPSG::4269", proj4.defs("EPSG:4269"));
     proj4.defs("EPSG:4617", "+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs +type=crs");
     proj4.defs("urn:ogc:def:crs:EPSG::4617", proj4.defs("EPSG:4617"));
+    proj4.defs("EPSG:102100", proj4.defs("EPSG:3857"));
 }
 import shpwrite from '@mapbox/shp-write';
 const JSZipModule: any = require('jszip');
@@ -1297,6 +1298,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
             if (!targetWkid) {
                 return geometry;
             }
+            const geomWkid = geometry.spatialReference?.wkid || (geometry.spatialReference as any)?.latestWkid;
 
             const fixCoord = (coordX: number, coordY: number): [number, number] => {
                 if (typeof coordX !== 'number' || typeof coordY !== 'number' || isNaN(coordX) || isNaN(coordY)) {
@@ -1311,7 +1313,6 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                     }
 
                     // Check for corrupted coordinates from previous buggy State Plane formula (X ~ 0.1..5, Y ~ 5..25)
-                    // Reverse formula: x = roughLon * 111320 / 0.3048; y = roughLat * 110540 / 0.3048;
                     if (coordX >= 0.1 && coordX <= 5.0 && coordY >= 5.0 && coordY <= 25.0) {
                         const recX = coordX * 111320 / 0.3048;
                         const recY = coordY * 110540 / 0.3048;
@@ -1320,13 +1321,13 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                         }
                     }
 
-                    // Geographic degrees (EPSG:4269 NAD83 Lat/Long: lon -180..180, lat -90..90)
+                    // Geographic degrees (EPSG:4269 NAD83 / WGS84: lon -180..180, lat -90..90)
                     if (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90) {
                         try {
                             const targetProj = targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
                             const pt = proj4('EPSG:4269', targetProj).forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
-                                return [pt[0], pt[1]];
+                                return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
                             }
                         } catch (e) {
                             console.warn('proj4 4269->2949 failed in sanitizeAndProjectGeometry:', e);
@@ -1339,7 +1340,7 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                             const targetProj = targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
                             const pt = proj4('EPSG:3857', targetProj).forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
-                                return [pt[0], pt[1]];
+                                return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
                             }
                         } catch (e) {
                             console.warn('proj4 3857->2949 failed in sanitizeAndProjectGeometry:', e);
@@ -1357,35 +1358,35 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
                         try {
                             const pt = proj4('EPSG:2949', 'EPSG:3857').forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
-                                return [pt[0], pt[1]];
+                                return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
                             }
                         } catch (e) {}
                     }
 
-                    // Geographic degrees (EPSG:4269 / NAD83: lon -180..180, lat -90..90)
+                    // Geographic degrees (EPSG:4269 / NAD83 / WGS84: lon -180..180, lat -90..90)
                     if (geomWkid === 4326 || geomWkid === 4269 || geomWkid === 4617 || (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90)) {
                         try {
-                            const pt = proj4('EPSG:4269', 'EPSG:3857').forward([coordX, coordY]);
+                            const pt = proj4('EPSG:4326', 'EPSG:3857').forward([coordX, coordY]);
                             if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
-                                return [pt[0], pt[1]];
+                                return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
                             }
                         } catch (e) {}
                     }
                 } else if (targetWkid === 4326 || targetWkid === 4269 || targetWkid === 4617) {
-                    // Target is geographic degrees (EPSG:4269)
+                    // Target is geographic degrees (EPSG:4269 / EPSG:4326)
                     if (Math.abs(coordX) <= 180 && Math.abs(coordY) <= 90) {
                         return [coordX, coordY];
                     }
                     if (coordX >= 100000 && coordX <= 800000 && coordY >= 4000000 && coordY <= 7000000) {
                         try {
                             const pt = proj4('EPSG:2949', 'EPSG:4269').forward([coordX, coordY]);
-                            if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [pt[0], pt[1]];
+                            if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [Number(pt[0].toFixed(8)), Number(pt[1].toFixed(8))];
                         } catch (e) {}
                     }
                     if (Math.abs(coordX) > 1000000 || Math.abs(coordY) > 1000000) {
                         try {
                             const pt = proj4('EPSG:3857', 'EPSG:4269').forward([coordX, coordY]);
-                            if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [pt[0], pt[1]];
+                            if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [Number(pt[0].toFixed(8)), Number(pt[1].toFixed(8))];
                         } catch (e) {}
                     }
                 }
@@ -1397,23 +1398,17 @@ export class MyDrawingsPanel extends React.PureComponent<MyDrawingsPanelProps, M
 
             if (geometry.type === 'point') {
                 const [newX, newY] = fixCoord(geometry.x, geometry.y);
-                geometry.x = newX;
-                geometry.y = newY;
-                geometry.spatialReference = targetSRObj;
+                return new Point({ x: newX, y: newY, spatialReference: targetSRObj });
             } else if (geometry.type === 'polyline') {
-                if (Array.isArray(geometry.paths)) {
-                    geometry.paths = geometry.paths.map((path: any[]) =>
-                        path.map((c: any[]) => fixCoord(c[0], c[1]))
-                    );
-                }
-                geometry.spatialReference = targetSRObj;
+                const paths = (geometry.paths || []).map((path: any[]) =>
+                    path.map((c: any[]) => fixCoord(c[0], c[1]))
+                );
+                return new Polyline({ paths, spatialReference: targetSRObj });
             } else if (geometry.type === 'polygon') {
-                if (Array.isArray(geometry.rings)) {
-                    geometry.rings = geometry.rings.map((ring: any[]) =>
-                        ring.map((c: any[]) => fixCoord(c[0], c[1]))
-                    );
-                }
-                geometry.spatialReference = targetSRObj;
+                const rings = (geometry.rings || []).map((ring: any[]) =>
+                    ring.map((c: any[]) => fixCoord(c[0], c[1]))
+                );
+                return new Polygon({ rings, spatialReference: targetSRObj });
             }
 
             return geometry;
@@ -8140,7 +8135,10 @@ ${lineStrings}
 
         filteredGraphics.forEach(g => {
             if (g && g.geometry) {
-                this.sanitizeAndProjectGeometry(g.geometry);
+                const sanitized = this.sanitizeAndProjectGeometry(g.geometry);
+                if (sanitized && sanitized !== g.geometry) {
+                    g.geometry = sanitized;
+                }
             }
         });
 
@@ -11135,8 +11133,77 @@ ${lineStrings}
         return this.createDefaultSymbol(geometryType);
     };
 
-    parseKMLGeometry = async (placemark: Element): Promise<any> => {
+    // Helper method to project coordinate from KML to current map spatial reference
+    private projectCoordToMap = (lon: number, lat: number, mapSR?: SpatialReference): [number, number] => {
+        if (typeof lon !== 'number' || typeof lat !== 'number' || isNaN(lon) || isNaN(lat)) {
+            return [lon, lat];
+        }
+        const effectiveSR = mapSR || this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference;
+        const targetWkid = effectiveSR ? (effectiveSR.wkid || (effectiveSR as any)?.latestWkid || 2949) : 2949;
+
+        // If coordinates are already projected in meters (e.g. lon > 180 or lat > 90)
+        if (Math.abs(lon) > 180 || Math.abs(lat) > 90) {
+            // Target is Quebec MTM Zone 7 meters (2949 or 32187)
+            if (targetWkid === 2949 || targetWkid === 32187) {
+                if (lon >= 100000 && lon <= 800000 && lat >= 4000000 && lat <= 7000000) {
+                    return [lon, lat];
+                }
+                if (Math.abs(lon) > 1000000 || Math.abs(lat) > 1000000) {
+                    try {
+                        const pt = proj4('EPSG:3857', targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949').forward([lon, lat]);
+                        if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
+                    } catch (e) {}
+                }
+            } else if (targetWkid === 3857 || targetWkid === 102100) {
+                if (Math.abs(lon) > 1000000 || Math.abs(lat) > 1000000) {
+                    return [lon, lat];
+                }
+                if (lon >= 100000 && lon <= 800000 && lat >= 4000000 && lat <= 7000000) {
+                    try {
+                        const pt = proj4('EPSG:2949', 'EPSG:3857').forward([lon, lat]);
+                        if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
+                    } catch (e) {}
+                }
+            }
+            return [lon, lat];
+        }
+
+        // Coordinates are in geographic degrees (WGS84 / NAD83 lon -180..180, lat -90..90)
+        if (targetWkid === 2949 || targetWkid === 32187) {
+            try {
+                const targetProj = targetWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
+                const pt = proj4('EPSG:4269', targetProj).forward([lon, lat]);
+                if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
+                    return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
+                }
+            } catch (e) {
+                console.warn('proj4 4269->2949 failed in projectCoordToMap:', e);
+            }
+        } else if (targetWkid === 3857 || targetWkid === 102100) {
+            try {
+                const pt = proj4('EPSG:4326', 'EPSG:3857').forward([lon, lat]);
+                if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
+                    return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
+                }
+            } catch (e) {
+                console.warn('proj4 4326->3857 failed in projectCoordToMap:', e);
+            }
+        } else if (targetWkid === 4269 || targetWkid === 4617 || targetWkid === 4326) {
+            return [lon, lat];
+        } else {
+            try {
+                const pt = proj4('EPSG:4326', `EPSG:${targetWkid}`).forward([lon, lat]);
+                if (pt && !isNaN(pt[0]) && !isNaN(pt[1])) {
+                    return [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))];
+                }
+            } catch (e) {}
+        }
+        return [lon, lat];
+    };
+
+    parseKMLGeometry = async (placemark: Element, targetSR?: SpatialReference): Promise<any> => {
         // Point, Polyline, Polygon are statically imported at top of file
+        const mapSR = targetSR || this.props.jimuMapView?.view?.spatialReference || this.sketchViewModel?.view?.spatialReference || new SpatialReference({ wkid: 2949 });
 
         // Try Point
         const pointElement = placemark.querySelector('Point coordinates');
@@ -11145,10 +11212,11 @@ ${lineStrings}
             if (coordsText) {
                 const points = this.parseKMLCoordinates(coordsText);
                 if (points && points.length >= 1) {
+                    const [x, y] = this.projectCoordToMap(points[0][0], points[0][1], mapSR);
                     return new Point({
-                        x: points[0][0],
-                        y: points[0][1],
-                        spatialReference: { wkid: 4269 }
+                        x,
+                        y,
+                        spatialReference: mapSR
                     });
                 }
             }
@@ -11161,28 +11229,84 @@ ${lineStrings}
             if (coordsText) {
                 const points = this.parseKMLCoordinates(coordsText);
                 if (points && points.length >= 2) {
+                    const paths = [points.map(pt => this.projectCoordToMap(pt[0], pt[1], mapSR))];
                     return new Polyline({
-                        paths: [points],
-                        spatialReference: { wkid: 4269 }
+                        paths,
+                        spatialReference: mapSR
                     });
                 }
             }
         }
 
-        // Try Polygon
-        const polygonElement = placemark.querySelector('Polygon outerBoundaryIs LinearRing coordinates') ||
-            placemark.querySelector('Polygon LinearRing coordinates') ||
-            placemark.querySelector('Polygon coordinates');
+        // Try Polygon (single or with holes)
+        const polygonElement = placemark.querySelector('Polygon');
         if (polygonElement) {
-            const coordsText = polygonElement.textContent?.trim();
-            if (coordsText) {
-                const points = this.parseKMLCoordinates(coordsText);
-                if (points && points.length >= 3) {
+            const outerCoord = polygonElement.querySelector('outerBoundaryIs LinearRing coordinates') ||
+                               polygonElement.querySelector('LinearRing coordinates') ||
+                               polygonElement.querySelector('coordinates');
+            if (outerCoord?.textContent?.trim()) {
+                const outerPoints = this.parseKMLCoordinates(outerCoord.textContent.trim());
+                if (outerPoints && outerPoints.length >= 3) {
+                    const rings: number[][][] = [
+                        outerPoints.map(pt => this.projectCoordToMap(pt[0], pt[1], mapSR))
+                    ];
+                    const innerCoords = polygonElement.querySelectorAll('innerBoundaryIs LinearRing coordinates');
+                    innerCoords.forEach(inner => {
+                        if (inner.textContent?.trim()) {
+                            const innerPoints = this.parseKMLCoordinates(inner.textContent.trim());
+                            if (innerPoints && innerPoints.length >= 3) {
+                                rings.push(innerPoints.map(pt => this.projectCoordToMap(pt[0], pt[1], mapSR)));
+                            }
+                        }
+                    });
                     return new Polygon({
-                        rings: [points],
-                        spatialReference: { wkid: 4269 }
+                        rings,
+                        spatialReference: mapSR
                     });
                 }
+            }
+        }
+
+        // Try MultiGeometry containing Polygon(s)
+        const multiPolygons = placemark.querySelectorAll('MultiGeometry Polygon');
+        if (multiPolygons && multiPolygons.length > 0) {
+            const rings: number[][][] = [];
+            multiPolygons.forEach(p => {
+                const c = p.querySelector('outerBoundaryIs LinearRing coordinates') ||
+                          p.querySelector('LinearRing coordinates') ||
+                          p.querySelector('coordinates');
+                if (c?.textContent?.trim()) {
+                    const pts = this.parseKMLCoordinates(c.textContent.trim());
+                    if (pts && pts.length >= 3) {
+                        rings.push(pts.map(pt => this.projectCoordToMap(pt[0], pt[1], mapSR)));
+                    }
+                }
+            });
+            if (rings.length > 0) {
+                return new Polygon({
+                    rings,
+                    spatialReference: mapSR
+                });
+            }
+        }
+
+        // Try MultiGeometry containing LineString(s)
+        const multiLines = placemark.querySelectorAll('MultiGeometry LineString coordinates');
+        if (multiLines && multiLines.length > 0) {
+            const paths: number[][][] = [];
+            multiLines.forEach(l => {
+                if (l.textContent?.trim()) {
+                    const pts = this.parseKMLCoordinates(l.textContent.trim());
+                    if (pts && pts.length >= 2) {
+                        paths.push(pts.map(pt => this.projectCoordToMap(pt[0], pt[1], mapSR)));
+                    }
+                }
+            });
+            if (paths.length > 0) {
+                return new Polyline({
+                    paths,
+                    spatialReference: mapSR
+                });
             }
         }
 
@@ -11195,7 +11319,7 @@ ${lineStrings}
 
         try {
             // KML coordinates are in format: lon,lat,alt lon,lat,alt ...
-            const cleanString = coordString.trim().replace(/\n/g, ' ').replace(/\s+/g, ' ');
+            const cleanString = coordString.trim().replace(/\r/g, ' ').replace(/\n/g, ' ').replace(/\t/g, ' ').replace(/\s+/g, ' ');
             const pairs = cleanString.split(' ');
 
             pairs.forEach(pair => {
@@ -11203,11 +11327,7 @@ ${lineStrings}
 
                 const values = pair.split(',').map(v => parseFloat(v.trim()));
                 if (values.length >= 2 && !isNaN(values[0]) && !isNaN(values[1])) {
-                    // Validate coordinates are within valid range
-                    if (values[0] >= -180 && values[0] <= 180 &&
-                        values[1] >= -90 && values[1] <= 90) {
-                        coords.push([values[0], values[1]]);
-                    }
+                    coords.push([values[0], values[1]]);
                 }
             });
         } catch (error) {
@@ -11431,79 +11551,10 @@ ${lineStrings}
                 const name = placemark.querySelector('name')?.textContent || __t("importedFeatureValue", { value: importedCount + 1 });
                 const description = this.extractKMLDescription(placemark);
 
-                // Parse geometry (in EPSG:4269 / NAD83 Lat/Long)
-                const rawGeometry = await this.parseKMLGeometry(placemark);
+                // Parse and project geometry directly into the map spatial reference (EPSG:2949, EPSG:32187, EPSG:3857, or EPSG:4269)
+                const geometry = await this.parseKMLGeometry(placemark, mapSR);
 
-                if (rawGeometry) {
-                    let geometry = rawGeometry;
-
-                    // Project geometry from EPSG:4269 (NAD83 Lat/Long) to map spatial reference (EPSG:2949 / EPSG:32187)
-                    if (mapSR && mapWkid && mapWkid !== 4269 && mapWkid !== 4617) {
-                        try {
-                            if (mapWkid === 2949 || mapWkid === 32187) {
-                                const targetProj = mapWkid === 32187 ? 'EPSG:32187' : 'EPSG:2949';
-                                const transform = proj4('EPSG:4269', targetProj);
-                                if (rawGeometry.type === 'point') {
-                                    const lon = rawGeometry.longitude ?? rawGeometry.x;
-                                    const lat = rawGeometry.latitude ?? rawGeometry.y;
-                                    const [x, y] = transform.forward([lon, lat]);
-                                    geometry = new Point({ x, y, spatialReference: mapSR });
-                                } else if (rawGeometry.type === 'polyline' && Array.isArray(rawGeometry.paths)) {
-                                    const paths = rawGeometry.paths.map((path: any[]) =>
-                                        path.map((coord: any[]) => transform.forward([coord[0], coord[1]]))
-                                    );
-                                    geometry = new Polyline({ paths, spatialReference: mapSR });
-                                } else if (rawGeometry.type === 'polygon' && Array.isArray(rawGeometry.rings)) {
-                                    const rings = rawGeometry.rings.map((ring: any[]) =>
-                                        ring.map((coord: any[]) => transform.forward([coord[0], coord[1]]))
-                                    );
-                                    geometry = new Polygon({ rings, spatialReference: mapSR });
-                                } else {
-                                    const projected = await this.projectGeometryFromWGS84(rawGeometry, mapSR);
-                                    geometry = projected || this.sanitizeAndProjectGeometry(rawGeometry);
-                                }
-                            } else if (mapWkid === 3857 || mapWkid === 102100) {
-                                geometry = webMercatorUtils.geographicToWebMercator(rawGeometry) || rawGeometry;
-                            } else {
-                                const projected = await this.projectGeometryFromWGS84(rawGeometry, mapSR);
-                                if (projected) {
-                                    geometry = projected;
-                                } else {
-                                    geometry = this.sanitizeAndProjectGeometry(rawGeometry);
-                                }
-                            }
-                        } catch (projErr) {
-                            console.warn('Error projecting KML geometry to map spatial reference, trying fallback:', projErr);
-                            geometry = this.sanitizeAndProjectGeometry(rawGeometry);
-                        }
-                    }
-
-                    // Post-projection validation: ensure coordinates are in meters if map is metric
-                    if (geometry && (mapWkid === 2949 || mapWkid === 32187 || mapWkid === 3857 || mapWkid === 102100)) {
-                        let sampleX: number | undefined;
-                        let sampleY: number | undefined;
-                        if (geometry.type === 'point') {
-                            sampleX = geometry.x;
-                            sampleY = geometry.y;
-                        } else if (geometry.type === 'polygon' && geometry.rings?.[0]?.[0]) {
-                            sampleX = geometry.rings[0][0][0];
-                            sampleY = geometry.rings[0][0][1];
-                        } else if (geometry.type === 'polyline' && geometry.paths?.[0]?.[0]) {
-                            sampleX = geometry.paths[0][0][0];
-                            sampleY = geometry.paths[0][0][1];
-                        }
-                        if (typeof sampleX === 'number' && typeof sampleY === 'number') {
-                            if (Math.abs(sampleX) <= 180 && Math.abs(sampleY) <= 90) {
-                                console.warn('[importKML] Sample coordinate is still in geographic degrees! Forcing sanitizeAndProjectGeometry.');
-                                geometry = this.sanitizeAndProjectGeometry(geometry);
-                            }
-                        }
-                    }
-
-                    if (geometry && mapSR) {
-                        geometry.spatialReference = mapSR;
-                    }
-
+                if (geometry) {
                     // Parse style from KML
                     const kmlStyle = this.parseKMLStyle(placemark, kmlDoc);
 
@@ -12375,8 +12426,20 @@ ${lineStrings}
                     if (geometries.length > 0) {
                         let extent: any = null;
                         for (const geom of geometries) {
-                            const ext = geom?.extent;
-                            if (ext) extent = extent ? extent.union(ext) : ext.clone();
+                            if (geom?.type === 'point') {
+                                const delta = (geom.spatialReference?.wkid === 4326 || geom.spatialReference?.wkid === 4269) ? 0.005 : 100;
+                                const ptExt = new Extent({
+                                    xmin: geom.x - delta,
+                                    ymin: geom.y - delta,
+                                    xmax: geom.x + delta,
+                                    ymax: geom.y + delta,
+                                    spatialReference: geom.spatialReference
+                                });
+                                extent = extent ? extent.union(ptExt) : ptExt;
+                            } else {
+                                const ext = geom?.extent;
+                                if (ext) extent = extent ? extent.union(ext) : ext.clone();
+                            }
                         }
                         if (extent) {
                             await this.props.jimuMapView.view.goTo(extent.expand(1.3), {
