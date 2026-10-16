@@ -54,7 +54,7 @@ import Circle from 'esri/geometry/Circle';
 import * as geometryEngine from 'esri/geometry/geometryEngine';
 import * as geometryJsonUtils from 'esri/geometry/support/jsonUtils';
 import * as symbolJsonUtils from 'esri/symbols/support/jsonUtils';
-console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.9) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
+console.log('%c[DrawAdvanced] Module widget.js chargé avec succès (v4.6.10) 🎨', 'color: #00e676; font-weight: bold; font-size: 13px; background: #222; padding: 3px 6px; border-radius: 3px;');
 import {
 	densifyOperator,
 	lengthOperator,
