@@ -37,6 +37,11 @@ declare module '@mapbox/shp-write' {
 }
 
 declare module 'shpjs' {
+    export const combine: any;
+    export const parseZip: any;
+    export const parseShp: any;
+    export const parseDbf: any;
+    export const getShapefile: any;
     const shp: any;
     export default shp;
 }

@@ -646,6 +646,7 @@ export default {
     permanentlyRemovesBufferZonesLabelsAnd: 'Permanently removes buffer zones, labels, and leader lines from all selected graphics. This action cannot be undone.',
     useTabToNavigateBetweenControls: 'Use Tab to navigate between controls. Use arrow keys to adjust numeric values. Press Enter or Space to activate buttons. Buffer status updates will be announced automatically.',
     failedToImportShapefileMessage: 'Failed to import shapefile: {message}',
+    noShapefileFoundInZip: 'No Shapefile (.shp) found in the ZIP archive (including subdirectories).',
     importantNotice: 'Important Notice',
     yourDrawingsAreSavedInYour: 'Your drawings are saved in your web browser using local storage. This means they\'re only available on this device and in this browser.',
     ifYouClearYourBrowserData: 'If you clear your browser data, switch to a different browser or computer, or if the application receives an update, your drawings may be lost.',

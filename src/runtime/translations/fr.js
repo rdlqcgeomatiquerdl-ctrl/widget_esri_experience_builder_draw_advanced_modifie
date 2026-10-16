@@ -650,6 +650,7 @@ System.register([], function (e) {
         permanentlyRemovesBufferZonesLabelsAnd: "Supprime définitivement les zones tampons, les étiquettes et les lignes de tête de tous les graphiques sélectionnés. Cette action ne peut être annulée.",
         useTabToNavigateBetweenControls: "Utilisez Tab pour naviguer entre les commandes. Utilisez les touches fléchées pour ajuster les valeurs numériques. Appuyez sur Entrée ou Espace pour activer les boutons. Les mises à jour de l'état du tampon seront annoncées automatiquement.",
         failedToImportShapefileMessage: "Impossible d'importer shapefile : {message}",
+        noShapefileFoundInZip: "Aucun fichier Shapefile (.shp) trouvé dans l'archive ZIP (y compris dans les sous-dossiers).",
         importantNotice: "Avis important",
         yourDrawingsAreSavedInYour: "Vos dessins sont enregistrés dans votre navigateur Web en utilisant le stockage local. Cela signifie qu'ils sont uniquement disponibles sur cet appareil et dans ce navigateur.",
         ifYouClearYourBrowserData: "Si vous effacez les données de votre navigateur, passez à un autre navigateur ou ordinateur, ou si l'application reçoit une mise à jour, vos dessins peuvent être perdus.",

@@ -2,7 +2,7 @@
   "name": "draw-advanced",
   "label": "Dessin Avancé (Draw Advanced)",
   "type": "widget",
-  "version": "4.6.8",
+  "version": "4.6.9",
   "exbVersion": "1.15.0",
   "author": "Brian McLeer (City of Grand Junction, CO) and Jeffrey Thompson (City of Arlington, TX); with contributions from Robert Scheitlin, Adrien Hoff, Mattias Ekström, and Jérôme Ray",
   "description": "Widget de dessin avancé pour ArcGIS Experience Builder. Code source original : https://github.com/brianmcleer/draw-advanced-widget",

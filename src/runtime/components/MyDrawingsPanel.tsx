@@ -48,8 +48,7 @@ if (proj4 && typeof proj4.defs === 'function') {
 import shpwrite from '@mapbox/shp-write';
 const JSZipModule: any = require('jszip');
 const JSZip: any = JSZipModule.default || JSZipModule;
-const shpModule: any = require('shpjs');
-const shp: any = shpModule.default || shpModule;
+import shp, { parseShp, parseDbf, combine } from 'shpjs';
 type GeoJsonProperties = { [name: string]: any } | null;
 type Geometry = { type: string;[name: string]: any };
 type FeatureCollection<G = Geometry, P = GeoJsonProperties> = {
@@ -11755,6 +11754,11 @@ ${lineStrings}
                                 }
                             }
 
+                            // DBF truncation fallback (10 characters max)
+                            if (cleanedAttributes.descriptio && !cleanedAttributes.description) {
+                                cleanedAttributes.description = cleanedAttributes.descriptio;
+                            }
+
                             // Add required attributes
                             const name = feature.properties?.name || feature.properties?.NAME || `Imported Feature ${importedCount + 1}`;
 
@@ -11978,8 +11982,8 @@ ${lineStrings}
                 case 'polyline':
                     // Line symbol
                     const lineColor = properties.stroke || '#0000FF';
-                    const lineWidth = properties.stroke_width || 2;
-                    const lineOpacity = properties.stroke_opacity !== undefined ? properties.stroke_opacity : 1;
+                    const lineWidth = properties.stroke_width !== undefined ? properties.stroke_width : (properties.stroke_wid !== undefined ? properties.stroke_wid : 2);
+                    const lineOpacity = properties.stroke_opacity !== undefined ? properties.stroke_opacity : (properties.stroke_opa !== undefined ? properties.stroke_opa : 1);
 
                     // Parse color and add alpha
                     const lineColorWithAlpha = this.addAlphaToColor(lineColor, lineOpacity);
@@ -11994,9 +11998,9 @@ ${lineStrings}
                 case 'extent':
                     // Polygon/Fill symbol
                     const fillColor = properties.fill || '#0000FF';
-                    const fillOpacity = properties.fill_opacity !== undefined ? properties.fill_opacity : 0.5;
+                    const fillOpacity = properties.fill_opacity !== undefined ? properties.fill_opacity : (properties.fill_opaci !== undefined ? properties.fill_opaci : 0.5);
                     const outlineColor = properties.stroke || '#000000';
-                    const outlineWidth = properties.stroke_width || 1.5;
+                    const outlineWidth = properties.stroke_width !== undefined ? properties.stroke_width : (properties.stroke_wid !== undefined ? properties.stroke_wid : 1.5);
 
                     // Parse colors and add alpha
                     const fillColorWithAlpha = this.addAlphaToColor(fillColor, fillOpacity);
@@ -12458,101 +12462,215 @@ ${lineStrings}
         }, 500);
     };
 
+    /**
+     * Recursively inspects a ZIP archive to find and parse all Shapefiles (.shp)
+     * located anywhere in the archive (root or any subdirectories).
+     * Automatically associates corresponding .dbf, .prj, and .cpg files for each layer.
+     */
+    private parseShapefilesFromZip = async (arrayBuffer: ArrayBuffer, fileName?: string): Promise<any> => {
+        const zip = await JSZip.loadAsync(arrayBuffer);
+
+        // Collect all valid .shp entries across all directories and subdirectories
+        const shpEntries: Array<{ path: string; entry: any }> = [];
+        for (const [rawPath, entry] of Object.entries(zip.files) as Array<[string, any]>) {
+            if (entry.dir) continue;
+            const normPath = rawPath.replace(/\\/g, '/');
+            // Ignore macOS metadata & AppleDouble hidden files
+            if (normPath.includes('__MACOSX') || normPath.split('/').pop()?.startsWith('._')) continue;
+            if (normPath.toLowerCase().endsWith('.shp')) {
+                shpEntries.push({ path: normPath, entry });
+            }
+        }
+
+        if (shpEntries.length === 0) {
+            throw new Error(this.nls('noShapefileFoundInZip') || 'Aucun fichier Shapefile (.shp) trouvé dans l\'archive ZIP (y compris dans les sous-dossiers).');
+        }
+
+        const allFeatures: any[] = [];
+        const mapSR = this.props.jimuMapView?.view?.spatialReference;
+        const mapWkid = mapSR?.wkid;
+
+        // Process each Shapefile found across any folder / subfolder
+        for (const { path: shpPath, entry: shpEntry } of shpEntries) {
+            const lastSlash = shpPath.lastIndexOf('/');
+            const dir = lastSlash >= 0 ? shpPath.substring(0, lastSlash + 1) : '';
+            const filename = lastSlash >= 0 ? shpPath.substring(lastSlash + 1) : shpPath;
+            const baseName = filename.slice(0, -4).toLowerCase();
+
+            // Find companion files in the same directory (case-insensitive matching)
+            let dbfEntry: any = null;
+            let prjEntry: any = null;
+            let cpgEntry: any = null;
+
+            for (const [pRaw, e] of Object.entries(zip.files) as Array<[string, any]>) {
+                if (e.dir) continue;
+                const pNorm = pRaw.replace(/\\/g, '/');
+                if (pNorm.includes('__MACOSX') || pNorm.split('/').pop()?.startsWith('._')) continue;
+
+                const pLastSlash = pNorm.lastIndexOf('/');
+                const pDir = pLastSlash >= 0 ? pNorm.substring(0, pLastSlash + 1) : '';
+                // Must be in same directory
+                if (pDir.toLowerCase() !== dir.toLowerCase()) continue;
+
+                const pFile = pLastSlash >= 0 ? pNorm.substring(pLastSlash + 1) : pNorm;
+                const pLastDot = pFile.lastIndexOf('.');
+                if (pLastDot < 0) continue;
+                const pBase = pFile.substring(0, pLastDot).toLowerCase();
+                const pExt = pFile.substring(pLastDot).toLowerCase();
+
+                if (pBase === baseName) {
+                    if (pExt === '.dbf') dbfEntry = e;
+                    else if (pExt === '.prj') prjEntry = e;
+                    else if (pExt === '.cpg') cpgEntry = e;
+                }
+            }
+
+            // If companion not in same folder and only 1 shapefile in ZIP, search across the entire ZIP
+            if (shpEntries.length === 1) {
+                if (!dbfEntry) {
+                    for (const [pRaw, e] of Object.entries(zip.files) as Array<[string, any]>) {
+                        if (!e.dir && pRaw.toLowerCase().endsWith('.dbf') && !pRaw.includes('__MACOSX')) {
+                            dbfEntry = e; break;
+                        }
+                    }
+                }
+                if (!prjEntry) {
+                    for (const [pRaw, e] of Object.entries(zip.files) as Array<[string, any]>) {
+                        if (!e.dir && pRaw.toLowerCase().endsWith('.prj') && !pRaw.includes('__MACOSX')) {
+                            prjEntry = e; break;
+                        }
+                    }
+                }
+            }
+
+            const shpBuffer = await shpEntry.async('arraybuffer');
+            const dbfBuffer = dbfEntry ? await dbfEntry.async('arraybuffer') : null;
+            const prjText = prjEntry ? (await prjEntry.async('text')).trim() : null;
+            const cpgText = cpgEntry ? (await cpgEntry.async('text')).trim() : null;
+
+            let fc: any = null;
+
+            // Direct parsing with parseShp + parseDbf + combine
+            if (typeof parseShp === 'function' && typeof combine === 'function') {
+                try {
+                    let geoms: any;
+                    // If prjText is available, pass it so parseShp reprojects via proj4 to WGS84
+                    if (prjText) {
+                        try {
+                            geoms = parseShp(shpBuffer, prjText);
+                        } catch (ePrj) {
+                            console.warn(`parseShp with prjText failed for ${shpPath}, retrying without PRJ:`, ePrj);
+                            geoms = parseShp(shpBuffer, false);
+                        }
+                    } else {
+                        geoms = parseShp(shpBuffer, false);
+                    }
+
+                    const attrs = (dbfBuffer && typeof parseDbf === 'function')
+                        ? parseDbf(dbfBuffer, cpgText)
+                        : [];
+
+                    fc = combine([geoms, attrs]);
+                } catch (shpErr) {
+                    console.warn(`Direct parseShp failed for ${shpPath}:`, shpErr);
+                }
+            }
+
+            // Fallback: create a mini-ZIP for this shapefile and call shp(miniZipBuffer)
+            if (!fc || !fc.features || fc.features.length === 0) {
+                try {
+                    const miniZip = new JSZip();
+                    miniZip.file(filename, shpBuffer);
+                    if (dbfEntry && dbfBuffer) miniZip.file(`${filename.slice(0, -4)}.dbf`, dbfBuffer);
+                    if (prjEntry && prjText) miniZip.file(`${filename.slice(0, -4)}.prj`, prjText);
+                    if (cpgEntry && cpgText) miniZip.file(`${filename.slice(0, -4)}.cpg`, cpgText);
+                    const miniBuf = await miniZip.generateAsync({ type: 'arraybuffer' });
+                    const parseFn = typeof shp === 'function' ? shp : (shp as any)?.default;
+                    if (typeof parseFn === 'function') {
+                        const parsedMini = await parseFn(miniBuf);
+                        fc = Array.isArray(parsedMini) ? parsedMini[0] : parsedMini;
+                    }
+                } catch (miniErr) {
+                    console.warn(`Mini-zip fallback failed for ${shpPath}:`, miniErr);
+                }
+            }
+
+            if (!fc || !fc.features || fc.features.length === 0) {
+                console.warn(`No features extracted from ${shpPath}`);
+                continue;
+            }
+
+            // Coordinate projection check for this layer
+            const isWGS84 = this.coordinatesLookLikeWGS84(fc);
+            if (!isWGS84 && prjText) {
+                // Raw coordinates because proj4 didn't handle the PRJ — use geometry service
+                if (mapWkid) {
+                    try {
+                        const projected = await this.projectGeoJSONViaGeometryService(fc, prjText, mapWkid);
+                        if (projected) {
+                            fc = projected;
+                            fc.crs = { type: 'name', properties: { name: `EPSG:${mapWkid}` } };
+                        }
+                    } catch (gsErr) {
+                        console.warn(`Geometry service projection failed for ${shpPath}:`, gsErr);
+                        fc.crs = { type: 'name', properties: { name: prjText } };
+                    }
+                } else {
+                    fc.crs = { type: 'name', properties: { name: prjText } };
+                }
+            } else if (isWGS84) {
+                // Standard WGS84 GeoJSON — delete crs so convertGeoJSONGeometry reprojects to mapSR
+                delete fc.crs;
+            }
+
+            const layerName = filename.slice(0, -4);
+            for (const feat of fc.features) {
+                if (!feat.properties) feat.properties = {};
+                if (!feat.properties.name && !feat.properties.title && !feat.properties.nom) {
+                    feat.properties.name = layerName;
+                }
+                allFeatures.push(feat);
+            }
+        }
+
+        if (allFeatures.length === 0) {
+            throw new Error('Aucune entité n\'a pu être extraite des fichiers Shapefile trouvés dans l\'archive.');
+        }
+
+        return {
+            type: 'FeatureCollection',
+            features: allFeatures
+        };
+    };
+
     handleShapefileImport = async (file: File) => {
         try {
             const arrayBuffer = await file.arrayBuffer();
+            let geoJSON: any;
 
-            // Step 1: Extract the PRJ WKT and create a PRJ-stripped ZIP.
-            // shpjs uses proj4 internally which MISPROJECTS ESRI-specific CRS
-            // (e.g., Krovak with X_Scale/Y_Scale/XY_Plane_Rotation produces
-            // valid-looking but WRONG WGS84 coordinates). By removing the .prj
-            // file before giving the ZIP to shpjs, we get raw un-reprojected
-            // coordinates that we can project correctly ourselves.
-            let prjWkt: string | null = null;
-            let parseBuffer = arrayBuffer; // Default: use original ZIP
-
-            try {
-                const zip = await JSZip.loadAsync(arrayBuffer);
-
-                // Find and extract the PRJ file
-                let prjFilename: string | null = null;
-                for (const [filename, zipEntry] of Object.entries(zip.files) as Array<[string, any]>) {
-                    if (filename.toLowerCase().endsWith('.prj') && !zipEntry.dir
-                        && !filename.toLowerCase().includes('__macosx')) {
-                        prjWkt = await zipEntry.async('text');
-                        prjFilename = filename;
-                        break;
-                    }
+            if (file.name.toLowerCase().endsWith('.zip')) {
+                geoJSON = await this.parseShapefilesFromZip(arrayBuffer, file.name);
+            } else if (file.name.toLowerCase().endsWith('.shp')) {
+                const parseFn = typeof parseShp === 'function' ? parseShp : (shp as any)?.parseShp;
+                const combineFn = typeof combine === 'function' ? combine : (shp as any)?.combine;
+                if (!parseFn || !combineFn) {
+                    throw new Error('Shapefile parser not available');
                 }
-
-                // If we found a PRJ, create a new ZIP without it
-                if (prjFilename && prjWkt) {
-                    zip.remove(prjFilename);
-                    parseBuffer = await zip.generateAsync({ type: 'arraybuffer' });
-                }
-            } catch (zipErr) {
-                console.warn('⚠️ Could not process ZIP for PRJ extraction:', zipErr);
-            }
-
-            // Step 2: Parse the shapefile with shpjs using the PRJ-stripped ZIP.
-            // Without a .prj file, shpjs returns raw coordinates as-is.
-            let geoJSON = await shp(parseBuffer);
-
-            // Normalize to single FeatureCollection
-            if (Array.isArray(geoJSON)) {
-                const allFeatures = geoJSON.flatMap((fc: any) => fc.features || []);
-                geoJSON = { type: 'FeatureCollection', features: allFeatures };
-            }
-            if (!geoJSON.type || geoJSON.type !== 'FeatureCollection') {
-                geoJSON = {
-                    type: 'FeatureCollection',
-                    features: Array.isArray(geoJSON) ? geoJSON : [geoJSON]
-                };
-            }
-            if (!geoJSON.features || geoJSON.features.length === 0) {
-                throw new Error('No features found in shapefile');
-            }
-
-            // Step 3: Determine coordinate state and set CRS accordingly.
-            const isWGS84 = this.coordinatesLookLikeWGS84(geoJSON);
-            const testCoord = this.getFirstCoordinate(geoJSON);
-
-            if (isWGS84 && !prjWkt) {
-                // No PRJ and coords look WGS84 — assume WGS84
-                delete geoJSON.crs;
-            } else if (isWGS84 && prjWkt) {
-                // Coords are WGS84 even though we stripped the PRJ.
-                // This means the source CRS IS WGS84 (or very close).
-                delete geoJSON.crs;
-            } else if (!isWGS84 && prjWkt) {
-                // Raw source coordinates (shpjs didn't reproject because we stripped PRJ).
-                // Since the ArcGIS client-side PE doesn't work in ExB, use the ArcGIS
-                // Geometry Service (server-side REST) to project all coordinates at once.
-                const mapSR = this.props.jimuMapView?.view?.spatialReference;
-                const mapWkid = mapSR?.wkid;
-                let projectedViaService = false;
-
-                if (mapWkid) {
-                    try {
-                        const projected = await this.projectGeoJSONViaGeometryService(geoJSON, prjWkt, mapWkid);
-                        if (projected) {
-                            geoJSON = projected;
-                            geoJSON.crs = { type: 'name', properties: { name: `EPSG:${mapWkid}` } };
-                            projectedViaService = true;
-                        }
-                    } catch (gsError) {
-                        console.warn('⚠️ Geometry Service projection failed:', gsError);
-                    }
-                }
-
-                if (!projectedViaService) {
-                    // Fallback: pass WKT to convertGeoJSONGeometry to try ArcGIS PE
-                    geoJSON.crs = { type: 'name', properties: { name: prjWkt } };
-                }
+                const geoms = parseFn(arrayBuffer, false);
+                geoJSON = combineFn([geoms, []]);
             } else {
-                // Not WGS84, no PRJ — can't determine CRS
-                console.warn('⚠️ No .prj file and coordinates are not WGS84.');
-                delete geoJSON.crs;
+                try {
+                    geoJSON = await this.parseShapefilesFromZip(arrayBuffer, file.name);
+                } catch (zErr) {
+                    const parseFn = typeof parseShp === 'function' ? parseShp : (shp as any)?.parseShp;
+                    const combineFn = typeof combine === 'function' ? combine : (shp as any)?.combine;
+                    const geoms = parseFn ? parseFn(arrayBuffer, false) : [];
+                    geoJSON = combineFn ? combineFn([geoms, []]) : { type: 'FeatureCollection', features: [] };
+                }
+            }
+
+            if (!geoJSON || !geoJSON.features || geoJSON.features.length === 0) {
+                throw new Error('Aucune entité trouvée dans le Shapefile.');
             }
 
             await this.importGeoJSON(geoJSON);
